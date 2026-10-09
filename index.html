@@ -8,6 +8,7 @@
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#F2F5F3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0E1512" media="(prefers-color-scheme: dark)">
+<script>try{var t=localStorage.getItem('cuadre:theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -122,6 +123,22 @@ textarea.box { width: 100%; min-height: 110px; border-radius: var(--r-md); borde
 .toast { position: fixed; left: 16px; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); max-width: 488px; margin-inline: auto; background: var(--fg); color: var(--bg); border-radius: var(--r-md); padding: 14px 16px; font-weight: 700; font-size: 14px; z-index: 20; box-shadow: var(--shadow); }
 .banner .retry { color: inherit; text-decoration: underline; font-weight: 800; margin-left: 8px; min-height: 32px; }
 .who { word-break: break-all; }
+/* v0.2: fotos, logos y filas con imagen */
+.pic { flex: none; border-radius: 50%; object-fit: cover; background: var(--surface-2); display: inline-grid; place-items: center; font-family: var(--font-display); font-weight: 800; color: var(--accent); }
+.pic.sm { width: 40px; height: 40px; font-size: 17px; }
+.pic.md { width: 44px; height: 44px; font-size: 19px; }
+.pic.lg { width: 72px; height: 72px; font-size: 30px; border-radius: 22px; }
+.pic.xl { width: 96px; height: 96px; font-size: 40px; }
+.avbtn { border-radius: 50%; min-width: 40px; min-height: 40px; display: grid; place-items: center; }
+.topr { display: flex; align-items: center; gap: 10px; }
+.rowl { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.cardbtn { text-align: left; width: 100%; font: inherit; color: inherit; }
+.cardbtn .row { width: 100%; }
+.btn.small { min-height: 44px; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; width: auto; cursor: pointer; }
+.file { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.file:focus-visible + .linkbtn, .file:focus-visible ~ * { outline: 3px solid var(--accent); }
+.linkbtn { color: var(--expense); font-weight: 800; min-height: 44px; text-align: left; padding: 0 4px; }
+.link .pic { margin-right: 0; }
 </style>
 </head>
 <body>
@@ -135,3 +152,4 @@ textarea.box { width: 100%; min-height: 110px; border-radius: var(--r-md); borde
 <script src="app.js"></script>
 </body>
 </html>
+
