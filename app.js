@@ -369,7 +369,7 @@
   /* ---------- 9. Vistas ---------- */
   var tab = 'home', sub = 'menu', query = '', filter = 'all', sheet = null, msg = null, topMsg = null, rateErr = null;
   var busy = false, msgOk = false, newAccCur = 'VES', newCatKind = 'expense', authMode = 'login', authMsg = null, authBusy = false;
-  var editAcc = null, profDraft = null, authDraft = { email: '', username: '' };
+  var arm = null, editAcc = null, profDraft = null, authDraft = { email: '', username: '' };
   var $app = document.getElementById('app'), $nav = document.getElementById('nav'), $navwrap = document.getElementById('navwrap'), $sheet = document.getElementById('sheet');
 
   function rateChip() {
@@ -391,6 +391,15 @@
     if (offline) h += '<div class="banner">Sin conexión: ves tus últimos datos guardados y no puedes hacer cambios.<button class="retry" data-a="retry">Reintentar</button></div>';
     if (saveFailed) h += '<div class="banner bad">No se pudo guardar una copia en este dispositivo. Revisa que el navegador permita guardar datos.</div>';
     return h;
+  }
+
+  /* Eliminar con doble paso: primero se pulsa el botón y luego se desliza para confirmar. */
+  function showSlide() { var sl = document.querySelector('.slide'); if (sl && sl.scrollIntoView) sl.scrollIntoView({ block: 'center' }); }
+  function slideHtml(kind, id, hint) {
+    return '<div class="slidebox">' + (hint ? '<div class="muted">' + hint + '</div>' : '') +
+      '<div class="slide" data-kind="' + kind + '" data-id="' + esc(id) + '"><i class="slide-fill"></i><span class="slide-txt">Desliza para eliminar</span>' +
+      '<button type="button" class="slide-thumb" aria-label="Deslizar para confirmar la eliminación. Con teclado, pulsa Enter.">›</button></div>' +
+      '<button class="linkbtn plain" data-a="cancel-del">Cancelar</button></div>';
   }
 
   function viewHome() {
@@ -490,7 +499,14 @@
         '<div class="card"><div class="field"><label class="label" for="en">Nombre</label><input id="en" maxlength="30" autocomplete="off" value="' + esc(editAcc.name) + '"></div>' +
         '<div class="muted">Moneda: ' + (ea.currency === 'USD' ? 'Dólares' : 'Bolívares') + ' (no se puede cambiar). Cambiar el nombre no afecta tus movimientos.</div>' +
         (editAcc.msg ? '<div class="err" role="alert">' + esc(editAcc.msg) + '</div>' : '') +
-        '<button class="btn" data-a="save-acc"' + (editAcc.saving ? ' disabled' : '') + '>' + (editAcc.saving ? 'Guardando…' : 'Guardar cambios') + '</button></div>';
+        '<button class="btn" data-a="save-acc"' + (editAcc.saving ? ' disabled' : '') + '>' + (editAcc.saving ? 'Guardando…' : 'Guardar cambios') + '</button></div>' +
+        (function () {
+          var n = S.transactions.filter(function (t) { return t.accountId === ea.id; }).length;
+          var warn = n ? 'Esta cuenta tiene ' + n + (n === 1 ? ' movimiento' : ' movimientos') + ': también se eliminarán y los totales cambiarán.' : 'Esta cuenta no tiene movimientos.';
+          return '<div class="card dangerzone">' + (arm && arm.kind === 'acc' && arm.id === ea.id
+            ? slideHtml('acc', ea.id, esc(warn))
+            : '<button class="btn danger" data-a="ask-del" data-k="acc" data-id="' + esc(ea.id) + '"' + (editAcc.saving ? ' disabled' : '') + '>Eliminar cuenta</button>') + '</div>';
+        })();
     }
     if (sub === 'theme') {
       var th = readTheme();
@@ -519,7 +535,8 @@
       [['expense', 'Gastos'], ['income', 'Ingresos']].forEach(function (k) {
         hc += '<div class="label">' + k[1] + '</div>';
         S.categories.filter(function (c) { return c.kind === k[0]; }).sort(function (a, b) { return a.sortOrder - b.sortOrder; }).forEach(function (c) {
-          hc += '<div class="card"><div class="row"><span>' + esc(c.icon) + ' ' + esc(c.name) + '</span><button style="color:var(--expense);font-weight:800;min-height:44px" data-a="del-cat" data-id="' + esc(c.id) + '" aria-label="Eliminar categoría ' + esc(c.name) + '">Eliminar</button></div></div>';
+          var armed = arm && arm.kind === 'cat' && arm.id === c.id;
+          hc += '<div class="card"><div class="row"><span>' + esc(c.icon) + ' ' + esc(c.name) + '</span>' + (armed ? '' : '<button style="color:var(--expense);font-weight:800;min-height:44px" data-a="ask-del" data-k="cat" data-id="' + esc(c.id) + '" aria-label="Eliminar categoría ' + esc(c.name) + '">Eliminar</button>') + '</div>' + (armed ? slideHtml('cat', c.id, '') : '') + '</div>';
         });
       });
       hc += '<div class="card"><div class="label">Nueva categoría</div>' +
@@ -662,7 +679,7 @@
       (e.date ? '<div class="err">' + esc(e.date) + '</div>' : '') + '</div>' +
       '<div class="field"><label class="label" for="nt">Nota (opcional)</label><input id="nt" data-f="note" maxlength="120" placeholder="Ej. Almuerzo" autocomplete="off" value="' + esc(s.note) + '"></div>' +
       '<button class="btn" data-a="save-tx"' + (s.saving ? ' disabled' : '') + '>' + (s.saving ? 'Guardando…' : s.id ? 'Guardar cambios' : 'Listo') + '</button>' +
-      (s.id ? '<button class="btn danger" data-a="del-tx"' + (s.saving ? ' disabled' : '') + '>' + (s.confirmDelete ? 'Toca otra vez para eliminar' : 'Eliminar movimiento') + '</button>' : '') +
+      (s.id ? (s.confirmDelete ? slideHtml('tx', s.id, '') : '<button class="btn danger" data-a="del-tx"' + (s.saving ? ' disabled' : '') + '>Eliminar movimiento</button>') : '') +
       '</div></div>';
     if (focusAmount) { var el = document.getElementById('amt'); if (el) el.focus(); }
   }
@@ -693,7 +710,6 @@
   }
   async function deleteTx() {
     var s = sheet; if (!s || s.saving) return;
-    if (!s.confirmDelete) { s.confirmDelete = true; renderSheet(false); return; }
     s.saving = true; renderSheet(false);
     var ok = await act(async function () {
       await B.removeTx(s.id);
@@ -721,6 +737,29 @@
     if (ok) { editAcc = null; sub = 'accounts'; toast('Cuenta actualizada'); }
     else if (editAcc) { editAcc.saving = false; }
     render();
+  }
+  async function doDelete(kind, id) {
+    if (kind === 'acc') {
+      var a = accById(id); if (!a || (editAcc && editAcc.saving)) return;
+      var ok = await act(async function () {
+        if (CLOUD) check(await sb.rpc('delete_account', { p_id: id }));
+        S.transactions = S.transactions.filter(function (t) { return t.accountId !== id; });
+        S.accounts = S.accounts.filter(function (x) { return x.id !== id; });
+        persist();
+      });
+      arm = null;
+      if (ok) { editAcc = null; sub = 'accounts'; toast('Cuenta eliminada'); }
+      render(); return;
+    }
+    if (kind === 'cat') {
+      var c = catById(id); if (!c) { arm = null; render(); return; }
+      var ok2 = await act(async function () { await B.removeCategory(id); S.categories = S.categories.filter(function (x) { return x.id !== id; }); persist(); });
+      arm = null; if (ok2) toast('Categoría eliminada');
+      render(); return;
+    }
+  }
+  async function slideDone(kind, id) {
+    if (kind === 'tx') await deleteTx(); else await doDelete(kind, id);
   }
   function startProfileDraft() {
     var pf = S.profile || {};
@@ -828,12 +867,12 @@
       if (a === 'close-scrim') { if (ev.target === el) { sheet = null; renderSheet(); } return; }
       if (a === 'close') { sheet = null; renderSheet(); return; }
       if (a === 'auth-switch') { authMode = authMode === 'login' ? 'signup' : 'login'; authMsg = null; renderAuth(); return; }
-      if (a === 'tab') { tab = v; sub = 'menu'; msg = null; topMsg = null; render(); window.scrollTo(0, 0); return; }
+      if (a === 'tab') { arm = null; tab = v; sub = 'menu'; msg = null; topMsg = null; render(); window.scrollTo(0, 0); return; }
       if (a === 'goto-profile') { tab = 'more'; sub = 'profile'; msg = null; startProfileDraft(); render(); window.scrollTo(0, 0); return; }
       if (a === 'goto-rate') { tab = 'more'; sub = 'rate'; msg = null; render(); window.scrollTo(0, 0); return; }
-      if (a === 'sub') { sub = v; msg = null; topMsg = null; rateErr = null; if (v === 'profile') startProfileDraft(); render(); window.scrollTo(0, 0); return; }
+      if (a === 'sub') { arm = null; sub = v; msg = null; topMsg = null; rateErr = null; if (v === 'profile') startProfileDraft(); render(); window.scrollTo(0, 0); return; }
       if (a === 'theme') { setTheme(v); render(); return; }
-      if (a === 'edit-acc') { var ea0 = accById(id); if (!ea0) return; editAcc = { id: id, name: ea0.name, logo: ea0.logo || '', msg: null, saving: false }; sub = 'acc-edit'; render(); window.scrollTo(0, 0); return; }
+      if (a === 'edit-acc') { arm = null; var ea0 = accById(id); if (!ea0) return; editAcc = { id: id, name: ea0.name, logo: ea0.logo || '', msg: null, saving: false }; sub = 'acc-edit'; render(); window.scrollTo(0, 0); return; }
       if (a === 'rm-logo') { editAcc.logo = ''; render(); return; }
       if (a === 'save-acc') { await saveAccountEdit(); return; }
       if (a === 'rm-avatar') { profDraft.avatar = ''; render(); return; }
@@ -853,7 +892,7 @@
       if (a === 'sacc') { sheet.accountId = v; renderSheet(false); return; }
       if (a === 'sdate') { sheet.dateMode = v; renderSheet(false); return; }
       if (a === 'save-tx') { await saveTx(); return; }
-      if (a === 'del-tx') { await deleteTx(); return; }
+      if (a === 'del-tx') { if (sheet && !sheet.saving) { sheet.confirmDelete = true; renderSheet(false); showSlide(); } return; }
       if (a === 'acur') { newAccCur = v; render(); return; }
       if (a === 'ckind') { newCatKind = v; render(); return; }
       if (a === 'add-account') {
@@ -880,13 +919,18 @@
         }
         render(); return;
       }
-      if (a === 'del-cat') {
-        var c = catById(id); topMsg = null;
-        if (S.transactions.some(function (t) { return t.categoryId === id; })) topMsg = 'No se puede eliminar "' + c.name + '": tiene movimientos. Cámbiales la categoría primero.';
-        else if (S.categories.filter(function (x) { return x.kind === c.kind; }).length <= 1) topMsg = 'Debe quedar al menos una categoría de este tipo.';
-        else await act(async function () { await B.removeCategory(id); S.categories = S.categories.filter(function (x) { return x.id !== id; }); persist(); });
-        render(); if (topMsg) window.scrollTo(0, 0); return;
+      if (a === 'ask-del') {
+        topMsg = null;
+        if (v === undefined && el.dataset.k === 'cat') {
+          var c = catById(id);
+          if (S.transactions.some(function (t) { return t.categoryId === id; })) topMsg = 'No se puede eliminar "' + c.name + '": tiene movimientos. Elimínalos o cámbiales la categoría primero.';
+          else if (S.categories.filter(function (x) { return x.kind === c.kind; }).length <= 1) topMsg = 'Debe quedar al menos una categoría de este tipo.';
+          else arm = { kind: 'cat', id: id };
+          render(); if (topMsg) window.scrollTo(0, 0); else showSlide(); return;
+        }
+        arm = { kind: el.dataset.k, id: id }; render(); showSlide(); return;
       }
+      if (a === 'cancel-del') { arm = null; if (sheet) { sheet.confirmDelete = false; renderSheet(false); } render(); return; }
       if (a === 'fetch-rate') { await fetchRateClick(); return; }
       if (a === 'save-rate') {
         var r = parseRate(document.getElementById('rm').value);
@@ -934,6 +978,37 @@
       else { msg = 'No se pudo leer esa imagen. Prueba con otra (JPG o PNG).'; msgOk = false; }
       render();
     }
+  });
+  /* Deslizar para confirmar */
+  var drag = null;
+  document.addEventListener('pointerdown', function (ev) {
+    var th = ev.target.closest && ev.target.closest('.slide-thumb'); if (!th) return;
+    var tr = th.parentNode;
+    drag = { th: th, tr: tr, fill: tr.querySelector('.slide-fill'), x0: ev.clientX, max: Math.max(1, tr.clientWidth - th.offsetWidth - 8), id: ev.pointerId, dx: 0 };
+    try { th.setPointerCapture(ev.pointerId); } catch (e) { /* sigue igual */ }
+    th.style.transition = 'none'; ev.preventDefault();
+  });
+  document.addEventListener('pointermove', function (ev) {
+    if (!drag || ev.pointerId !== drag.id) return;
+    drag.dx = Math.min(drag.max, Math.max(0, ev.clientX - drag.x0));
+    drag.th.style.transform = 'translateX(' + drag.dx + 'px)';
+    drag.fill.style.width = (drag.dx + drag.th.offsetWidth + 8) + 'px';
+  });
+  function endDrag(ev) {
+    if (!drag || ev.pointerId !== drag.id) return;
+    var d = drag; drag = null;
+    if (ev.type === 'pointerup' && d.dx >= d.max * 0.9) {
+      d.th.style.transform = 'translateX(' + d.max + 'px)'; d.fill.style.width = '100%';
+      slideDone(d.tr.dataset.kind, d.tr.dataset.id);
+    } else {
+      d.th.style.transition = 'transform .2s ease'; d.th.style.transform = 'translateX(0)'; d.fill.style.width = '0';
+    }
+  }
+  document.addEventListener('pointerup', endDrag);
+  document.addEventListener('pointercancel', endDrag);
+  document.addEventListener('keydown', function (ev) {
+    var th = ev.target.closest && ev.target.closest('.slide-thumb');
+    if (th && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); slideDone(th.parentNode.dataset.kind, th.parentNode.dataset.id); }
   });
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && sheet) { sheet = null; renderSheet(); } });
 
