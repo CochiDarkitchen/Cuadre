@@ -216,3 +216,117 @@ end;
 $$;
 revoke execute on function public.delete_account(uuid) from public, anon;
 grant  execute on function public.delete_account(uuid) to authenticated;
+
+-- =====================================================================
+-- v0.4: pagos programados, cuotas (Cashea), deudas, presupuestos,
+--       gastos divididos, tasas de referencia y días de aviso.
+-- Seguro de ejecutar más de una vez. Requiere PostgreSQL 15 o superior
+-- (los proyectos nuevos de Supabase ya lo tienen).
+-- =====================================================================
+
+-- Tasas de referencia (euro BCV y dólar paralelo) y días de aviso por defecto
+alter table public.settings
+  add column if not exists eur_rate_e4     bigint not null default 0 check (eur_rate_e4 >= 0),
+  add column if not exists eur_updated_at  timestamptz,
+  add column if not exists par_rate_e4     bigint not null default 0 check (par_rate_e4 >= 0),
+  add column if not exists par_updated_at  timestamptz,
+  add column if not exists remind_days     integer not null default 3 check (remind_days between 0 and 30);
+
+-- Gasto dividido: lista de {name, shareMinor, settled} con lo que le toca a cada persona
+alter table public.transactions
+  add column if not exists split jsonb check (split is null or jsonb_typeof(split) = 'array');
+
+-- ---------- Pagos programados (se repiten) ----------
+create table if not exists public.scheduled_payments (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  name         text not null check (char_length(btrim(name)) between 1 and 40),
+  amount_minor bigint not null check (amount_minor > 0 and amount_minor <= 10000000000000),
+  currency     text not null check (currency in ('VES', 'USD')),
+  category_id  uuid,
+  account_id   uuid,
+  frequency    text not null check (frequency in ('weekly', 'biweekly', 'monthly', 'yearly')),
+  next_due     date not null,
+  anchor_day   integer not null default 1 check (anchor_day between 1 and 31),
+  remind_days  integer check (remind_days between 0 and 30),   -- null = usar el general
+  active       boolean not null default true,
+  created_at   timestamptz not null default now(),
+  unique (user_id, id),
+  foreign key (user_id, category_id) references public.categories (user_id, id) on delete set null (category_id),
+  foreign key (user_id, account_id)  references public.accounts (user_id, id)  on delete set null (account_id)
+);
+
+-- ---------- Compras en cuotas (Cashea y similares) ----------
+create table if not exists public.installment_plans (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  name         text not null check (char_length(btrim(name)) between 1 and 40),
+  total_minor  bigint not null check (total_minor > 0 and total_minor <= 10000000000000),
+  currency     text not null check (currency in ('VES', 'USD')),
+  installments integer not null check (installments between 1 and 60),
+  paid_count   integer not null default 0 check (paid_count >= 0),
+  frequency    text not null check (frequency in ('weekly', 'biweekly', 'monthly', 'yearly')),
+  first_due    date not null,
+  anchor_day   integer not null default 1 check (anchor_day between 1 and 31),
+  category_id  uuid,
+  account_id   uuid,
+  remind_days  integer check (remind_days between 0 and 30),
+  created_at   timestamptz not null default now(),
+  unique (user_id, id),
+  check (paid_count <= installments),
+  foreign key (user_id, category_id) references public.categories (user_id, id) on delete set null (category_id),
+  foreign key (user_id, account_id)  references public.accounts (user_id, id)  on delete set null (account_id)
+);
+
+-- ---------- Deudas: 'owe' = yo debo, 'owed' = me deben ----------
+create table if not exists public.debts (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  kind        text not null check (kind in ('owe', 'owed')),
+  person      text not null check (char_length(btrim(person)) between 1 and 40),
+  note        text not null default '' check (char_length(note) <= 120),
+  total_minor bigint not null check (total_minor > 0 and total_minor <= 10000000000000),
+  paid_minor  bigint not null default 0 check (paid_minor >= 0),
+  currency    text not null check (currency in ('VES', 'USD')),
+  due_date    date,
+  remind_days integer check (remind_days between 0 and 30),
+  created_at  timestamptz not null default now(),
+  unique (user_id, id),
+  check (paid_minor <= total_minor)
+);
+
+-- ---------- Presupuestos mensuales por categoría ----------
+create table if not exists public.budgets (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  category_id uuid not null,
+  limit_minor bigint not null check (limit_minor > 0 and limit_minor <= 10000000000000),
+  currency    text not null check (currency in ('VES', 'USD')),
+  created_at  timestamptz not null default now(),
+  unique (user_id, id),
+  unique (user_id, category_id),
+  foreign key (user_id, category_id) references public.categories (user_id, id) on delete cascade
+);
+
+alter table public.scheduled_payments enable row level security;
+alter table public.installment_plans  enable row level security;
+alter table public.debts              enable row level security;
+alter table public.budgets            enable row level security;
+
+drop policy if exists "scheduled_payments: solo el dueño" on public.scheduled_payments;
+create policy "scheduled_payments: solo el dueño" on public.scheduled_payments
+  for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+drop policy if exists "installment_plans: solo el dueño" on public.installment_plans;
+create policy "installment_plans: solo el dueño" on public.installment_plans
+  for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+drop policy if exists "debts: solo el dueño" on public.debts;
+create policy "debts: solo el dueño" on public.debts
+  for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+drop policy if exists "budgets: solo el dueño" on public.budgets;
+create policy "budgets: solo el dueño" on public.budgets
+  for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+
+revoke all on public.scheduled_payments, public.installment_plans, public.debts, public.budgets from anon;
+grant select, insert, update, delete on public.scheduled_payments, public.installment_plans, public.debts, public.budgets to authenticated;
+
+-- Al borrar una cuenta, también hay que soltarla de los pagos que la usaban (lo hace sola la regla "set null").
