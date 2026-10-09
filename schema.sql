@@ -198,3 +198,21 @@ $$;
 
 revoke execute on function public.seed_defaults() from public, anon;
 grant  execute on function public.seed_defaults() to authenticated;
+
+-- ---------- v0.3: eliminar una cuenta junto con sus movimientos (todo o nada) ----------
+create or replace function public.delete_account(p_id uuid)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Debes iniciar sesión' using errcode = '28000';
+  end if;
+  delete from public.transactions where account_id = p_id and user_id = auth.uid();
+  delete from public.accounts     where id = p_id         and user_id = auth.uid();
+end;
+$$;
+revoke execute on function public.delete_account(uuid) from public, anon;
+grant  execute on function public.delete_account(uuid) to authenticated;
