@@ -94,7 +94,23 @@ create table if not exists public.settings (
   updated_at      timestamptz not null default now()
 );
 
+-- ---------- v0.2: logo opcional de cada cuenta ----------
+-- Imagen pequeña (96x96) guardada como texto. Seguro de ejecutar más de una vez.
+alter table public.accounts
+  add column if not exists logo text check (logo is null or (char_length(logo) <= 60000 and logo like 'data:image/%'));
+
+-- ---------- v0.2: perfil (usuario y foto) ----------
+create table if not exists public.profiles (
+  user_id    uuid primary key default auth.uid() references auth.users (id) on delete cascade,
+  username   text check (username is null or username ~ '^[a-z0-9_.]{3,20}$'),
+  avatar     text check (avatar is null or (char_length(avatar) <= 120000 and avatar like 'data:image/%')),
+  updated_at timestamptz not null default now()
+);
+-- Dos personas no pueden tener el mismo usuario.
+create unique index if not exists profiles_username_uidx on public.profiles (username) where username is not null;
+
 -- ---------- Seguridad por filas (RLS) ----------
+alter table public.profiles     enable row level security;
 alter table public.accounts     enable row level security;
 alter table public.categories   enable row level security;
 alter table public.transactions enable row level security;
@@ -124,9 +140,15 @@ create policy "settings: solo el dueño" on public.settings
   using (user_id = (select auth.uid()))
   with check (user_id = (select auth.uid()));
 
+drop policy if exists "profiles: solo el dueño" on public.profiles;
+create policy "profiles: solo el dueño" on public.profiles
+  for all to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+
 -- Permisos: solo usuarios con sesión iniciada. Quien no inició sesión no puede nada.
-revoke all on public.accounts, public.categories, public.transactions, public.settings from anon;
-grant select, insert, update, delete on public.accounts, public.categories, public.transactions, public.settings to authenticated;
+revoke all on public.accounts, public.categories, public.transactions, public.settings, public.profiles from anon;
+grant select, insert, update, delete on public.accounts, public.categories, public.transactions, public.settings, public.profiles to authenticated;
 
 -- ---------- Datos iniciales para un usuario nuevo ----------
 -- La app la llama sola la primera vez que alguien inicia sesión. Es idempotente:
