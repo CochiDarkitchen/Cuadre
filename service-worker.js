@@ -10,7 +10,7 @@
    Lo que NUNCA guarda: las llamadas a Supabase, a la tasa del dólar ni los
    datos financieros. Esos siempre van directo a internet.
    ===================================================================== */
-const VERSION = 'cuadre-v5';
+const VERSION = 'cuadre-v6';
 const SHELL = [
   './',
   'index.html',
@@ -89,7 +89,4 @@ self.addEventListener('notificationclick', (event) => {
       list.length ? list[0].focus() : self.clients.openWindow('./')
     )
   );
-});
-
-  // Todo lo demás (Supabase, tasa del dólar, fuentes): directo a internet, sin guardar.
 });
