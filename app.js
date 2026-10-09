@@ -22,6 +22,7 @@
   var CLOUD = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
   var LOCAL_KEY = 'cuadre:web:v1';
   var DISPLAY_KEY = 'cuadre:display';
+  var THEME_KEY = 'cuadre:theme';
   var RATE_URL = 'https://ve.dolarapi.com/v1/dolares/oficial';
 
   /* ---------- 2. Dinero en enteros (centavos). Nunca decimales flotantes. ---------- */
@@ -122,6 +123,50 @@
     if (/schema cache|does not exist|relation/i.test(m)) return 'Faltan las tablas en Supabase: ejecuta schema.sql completo en el SQL Editor. (' + m + ')';
     return m + (e && e.code ? ' [' + e.code + ']' : '');
   }
+  /* Tema: 'system' (como el dispositivo), 'light' o 'dark'. Se recuerda en este dispositivo. */
+  function readTheme() { try { var v = localStorage.getItem(THEME_KEY); return v === 'light' || v === 'dark' ? v : 'system'; } catch (e) { return 'system'; } }
+  function applyTheme(t) {
+    var root = document.documentElement;
+    if (t === 'light' || t === 'dark') root.setAttribute('data-theme', t); else root.removeAttribute('data-theme');
+    var metas = document.querySelectorAll('meta[name="theme-color"]');
+    if (metas.length === 2) {
+      metas[0].setAttribute('content', t === 'dark' ? '#0E1512' : '#F2F5F3');
+      metas[1].setAttribute('content', t === 'light' ? '#F2F5F3' : '#0E1512');
+    }
+  }
+  function setTheme(t) { try { if (t === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch (e) { /* se aplica igual */ } applyTheme(t); }
+  applyTheme(readTheme());
+
+  /* Imágenes: se recortan a cuadrado y se reducen para que pesen muy poco (sin subir archivos grandes). */
+  function imageToDataUrl(file, size, type, quality) {
+    return new Promise(function (resolve, reject) {
+      if (!file || !/^image\//.test(file.type || '')) { reject(new Error('imagen')); return; }
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        try {
+          var side = Math.min(img.naturalWidth, img.naturalHeight);
+          if (!side) throw new Error('imagen');
+          var c = document.createElement('canvas'); c.width = c.height = size;
+          var ctx = c.getContext('2d');
+          if (type === 'image/jpeg') { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, size, size); }
+          ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+          var out = c.toDataURL(type, quality);
+          URL.revokeObjectURL(url); resolve(out);
+        } catch (e) { URL.revokeObjectURL(url); reject(new Error('imagen')); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('imagen')); };
+      img.src = url;
+    });
+  }
+  function safeImg(src) { return typeof src === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/=]+$/.test(src) ? src : ''; }
+  function pic(src, name, cls) {
+    var ok = safeImg(src);
+    return ok ? '<img class="pic ' + cls + '" alt="" src="' + ok + '">'
+      : '<span class="pic ph ' + cls + '" aria-hidden="true">' + esc((String(name || '?').trim().charAt(0) || '?').toUpperCase()) + '</span>';
+  }
+  function normUser(u) { return String(u || '').trim().replace(/^@/, '').toLowerCase(); }
+  function validUser(u) { return /^[a-z0-9_.]{3,20}$/.test(u); }
+
   var toastTimer = null;
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -214,9 +259,11 @@
       fetchAll('transactions', 'created_at', false)
     ]);
     var s = st.data || {};
+    var profile = await loadProfile();
     return {
       version: 1,
-      accounts: res[0].map(function (a) { return { id: a.id, name: a.name, currency: a.currency, openingMinor: Number(a.opening_minor), createdAt: a.created_at }; }),
+      profile: profile,
+      accounts: res[0].map(function (a) { return { id: a.id, name: a.name, currency: a.currency, openingMinor: Number(a.opening_minor), createdAt: a.created_at, logo: safeImg(a.logo) }; }),
       categories: res[1].map(function (c) { return { id: c.id, name: c.name, icon: c.icon, kind: c.kind, sortOrder: c.sort_order }; }),
       transactions: res[2].map(function (t) {
         return { id: t.id, type: t.type, amountMinor: Number(t.amount_minor), currency: t.currency, rateE4: Number(t.rate_e4),
@@ -226,17 +273,48 @@
       displayCurrency: readDisplay()
     };
   }
+  /* Perfil (usuario y foto). Si falta la tabla, la app sigue funcionando y avisa en la pantalla de perfil. */
+  async function loadProfile() {
+    try {
+      var pr = check(await sb.from('profiles').select('*').maybeSingle());
+      if (!pr.data) {
+        var un = normUser(user && user.user_metadata && user.user_metadata.username), row = { user_id: user.id, username: validUser(un) ? un : null };
+        try { check(await sb.from('profiles').insert(row)); }
+        catch (e1) { if (row.username) { row.username = null; try { check(await sb.from('profiles').insert(row)); } catch (e2) { /* sin perfil por ahora */ } } }
+        pr = check(await sb.from('profiles').select('*').maybeSingle());
+      }
+      var d = pr.data || {};
+      return { available: true, username: d.username || '', avatar: safeImg(d.avatar) };
+    } catch (e) {
+      if (/Failed to fetch|NetworkError|Load failed/i.test((e && e.message) || '')) throw e;
+      return { available: false, username: '', avatar: '' };
+    }
+  }
   function txRow(t) {
     return { id: t.id, user_id: user.id, type: t.type, amount_minor: t.amountMinor, currency: t.currency, rate_e4: t.rateE4,
       category_id: t.categoryId, account_id: t.accountId, note: t.note, date: t.dateISO, created_at: t.createdAt, updated_at: t.updatedAt };
   }
-  function accRow(a) { return { id: a.id, user_id: user.id, name: a.name, currency: a.currency, opening_minor: a.openingMinor, created_at: a.createdAt }; }
+  function accRow(a) {
+    var r = { id: a.id, user_id: user.id, name: a.name, currency: a.currency, opening_minor: a.openingMinor, created_at: a.createdAt };
+    if (a.logo) r.logo = a.logo;
+    return r;
+  }
   function catRow(c) { return { id: c.id, user_id: user.id, name: c.name, icon: c.icon, kind: c.kind, sort_order: c.sortOrder }; }
 
   /* Operaciones de escritura. En modo local no hacen nada (se guarda con persist()). */
   var B = {
     saveTx: async function (t) { if (CLOUD) check(await sb.from('transactions').upsert(txRow(t))); },
     removeTx: async function (id) { if (CLOUD) check(await sb.from('transactions').delete().eq('id', id)); },
+    saveAccount: async function (id, fields) { if (CLOUD) check(await sb.from('accounts').update(fields).eq('id', id)); },
+    saveProfile: async function (p) {
+      if (!CLOUD) return;
+      try { check(await sb.from('profiles').upsert({ user_id: user.id, username: p.username || null, avatar: p.avatar || null, updated_at: new Date().toISOString() })); }
+      catch (e) {
+        if (/duplicate key|unique/i.test((e && e.message) || '')) throw new Error('Ese usuario ya está en uso. Prueba con otro.');
+        if (/schema cache|does not exist|relation/i.test((e && e.message) || '')) throw new Error('Falta actualizar la base de datos: ejecuta schema.sql completo en Supabase.');
+        throw e;
+      }
+    },
     addAccounts: async function (list) { if (CLOUD && list.length) check(await sb.from('accounts').insert(list.map(accRow))); },
     addCategories: async function (list) { if (CLOUD && list.length) check(await sb.from('categories').insert(list.map(catRow))); },
     removeCategory: async function (id) { if (CLOUD) check(await sb.from('categories').delete().eq('id', id)); },
@@ -291,6 +369,7 @@
   /* ---------- 9. Vistas ---------- */
   var tab = 'home', sub = 'menu', query = '', filter = 'all', sheet = null, msg = null, topMsg = null, rateErr = null;
   var busy = false, msgOk = false, newAccCur = 'VES', newCatKind = 'expense', authMode = 'login', authMsg = null, authBusy = false;
+  var editAcc = null, profDraft = null, authDraft = { email: '', username: '' };
   var $app = document.getElementById('app'), $nav = document.getElementById('nav'), $navwrap = document.getElementById('navwrap'), $sheet = document.getElementById('sheet');
 
   function rateChip() {
@@ -318,7 +397,8 @@
     var disp = S.displayCurrency, other = disp === 'VES' ? 'USD' : 'VES', rate = S.rate.rateE4;
     var month = today().slice(0, 7), sum = monthSummary(month, disp), total = totalAvailable(disp);
     var recent = sorted().slice(0, 5), h = '';
-    h += '<div class="top"><div class="brand">Cuadre</div>' + rateChip() + '</div>' + banners();
+    h += '<div class="top"><div class="brand">Cuadre</div><div class="topr">' + rateChip() +
+      (CLOUD && user ? '<button class="avbtn" data-a="goto-profile" aria-label="Mi perfil">' + pic(S.profile && S.profile.avatar, (S.profile && S.profile.username) || user.email, 'sm') + '</button>' : '') + '</div></div>' + banners();
     if (rate <= 0) h += '<div class="banner">Aún no hay tasa del dólar. Toca el botón de arriba para definirla.</div>';
     h += '<div class="seg" role="group" aria-label="Moneda a mostrar"><button data-a="disp" data-v="VES" aria-pressed="' + (disp === 'VES') + '">Bs</button><button data-a="disp" data-v="USD" aria-pressed="' + (disp === 'USD') + '">$</button></div>';
     h += '<div class="card"><div class="label">Disponible</div><div class="hero">' + fmt(total, disp) + '</div>' +
@@ -370,21 +450,25 @@
         ['accounts', '🏦', 'Cuentas', S.accounts.length + ' cuentas'],
         ['cats', '🏷️', 'Categorías', S.categories.length + ' categorías'],
         ['rate', '💱', 'Tasa del dólar', r > 0 ? 'Bs ' + fmtRate(r) + ' por $' : 'Sin definir'],
+        ['theme', '🌗', 'Apariencia', { light: 'Claro', dark: 'Oscuro', system: 'Como el dispositivo' }[readTheme()]],
         ['backup', '💾', CLOUD ? 'Exportar e importar' : 'Copia de seguridad', CLOUD ? 'Descarga o trae datos' : 'Guarda o restaura tus datos']
       ];
-      var h = '<h1 class="h2">Más</h1>' + banners() + items.map(function (i) {
+      var pf = S.profile || {}, h = '<h1 class="h2">Más</h1>' + banners();
+      if (CLOUD && user) {
+        h += '<button class="link" data-a="sub" data-v="profile">' + pic(pf.avatar, pf.username || user.email, 'md') +
+          '<span class="col"><b>' + (pf.username ? '@' + esc(pf.username) : 'Tu perfil') + '</b><span class="muted who">' + esc(user.email || '') + '</span></span><span class="chev" aria-hidden="true">›</span></button>';
+      }
+      h += items.map(function (i) {
         return '<button class="link" data-a="sub" data-v="' + i[0] + '"><span class="e" aria-hidden="true">' + i[1] + '</span><span class="col"><b>' + i[2] + '</b><span class="muted">' + i[3] + '</span></span><span class="chev" aria-hidden="true">›</span></button>';
       }).join('');
-      if (CLOUD && user) {
-        h += '<div class="card"><div class="label">Tu cuenta</div><div class="who">' + esc(user.email || '') + '</div><button class="btn quiet" data-a="logout">Cerrar sesión</button></div>';
-      }
-      return h + '<div class="muted">Cuadre v0.1 · ' + (CLOUD ? 'tus datos están en la nube.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
+      if (CLOUD && user) h += '<button class="btn quiet" data-a="logout">Cerrar sesión</button>';
+      return h + '<div class="muted">Cuadre v0.2 · ' + (CLOUD ? 'tus datos están en la nube.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
     }
     var back = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button>';
     if (sub === 'accounts') {
-      var ha = back + '<h1 class="h2">Cuentas</h1>' + banners();
+      var ha = back + '<h1 class="h2">Cuentas</h1>' + banners() + '<div class="muted">Toca una cuenta para cambiarle el nombre o ponerle un logo.</div>';
       S.accounts.forEach(function (a) {
-        ha += '<div class="card"><div class="row"><div class="col"><b>' + esc(a.name) + '</b><span class="muted">' + (a.currency === 'USD' ? 'Dólares' : 'Bolívares') + '</span></div><span class="num">' + fmt(balance(a), a.currency) + '</span></div></div>';
+        ha += '<button class="card cardbtn" data-a="edit-acc" data-id="' + esc(a.id) + '" aria-label="Editar cuenta ' + esc(a.name) + '"><div class="row"><div class="rowl">' + pic(a.logo, a.name, 'md') + '<div class="col"><b>' + esc(a.name) + '</b><span class="muted">' + (a.currency === 'USD' ? 'Dólares' : 'Bolívares') + '</span></div></div><span class="num">' + fmt(balance(a), a.currency) + '</span></div></button>';
       });
       ha += '<div class="card"><div class="label">Nueva cuenta</div>' +
         '<div class="field"><label for="an">Nombre</label><input id="an" maxlength="30" placeholder="Ej. Banesco" autocomplete="off"></div>' +
@@ -393,6 +477,42 @@
         (msg ? '<div class="err" role="alert">' + esc(msg) + '</div>' : '') +
         '<button class="btn" data-a="add-account">Agregar cuenta</button></div>';
       return ha;
+    }
+    if (sub === 'acc-edit' && editAcc) {
+      var ea = accById(editAcc.id);
+      if (!ea) { sub = 'accounts'; return viewMore(); }
+      return '<button class="back" data-a="sub" data-v="accounts">‹ Cuentas</button><h1 class="h2">Editar cuenta</h1>' + banners() +
+        '<div class="card"><div class="rowl">' + pic(editAcc.logo, editAcc.name || ea.name, 'lg') +
+        '<div class="col"><label class="btn quiet small" for="logofile">' + (editAcc.logo ? 'Cambiar logo' : 'Subir logo') + '</label>' +
+        '<input id="logofile" class="file" type="file" accept="image/*">' +
+        (editAcc.logo ? '<button class="linkbtn" data-a="rm-logo">Quitar logo</button>' : '') + '</div></div>' +
+        '<div class="muted">Opcional. Se recorta en cuadrado; funciona mejor con el logo del banco en una imagen cuadrada.</div></div>' +
+        '<div class="card"><div class="field"><label class="label" for="en">Nombre</label><input id="en" maxlength="30" autocomplete="off" value="' + esc(editAcc.name) + '"></div>' +
+        '<div class="muted">Moneda: ' + (ea.currency === 'USD' ? 'Dólares' : 'Bolívares') + ' (no se puede cambiar). Cambiar el nombre no afecta tus movimientos.</div>' +
+        (editAcc.msg ? '<div class="err" role="alert">' + esc(editAcc.msg) + '</div>' : '') +
+        '<button class="btn" data-a="save-acc"' + (editAcc.saving ? ' disabled' : '') + '>' + (editAcc.saving ? 'Guardando…' : 'Guardar cambios') + '</button></div>';
+    }
+    if (sub === 'theme') {
+      var th = readTheme();
+      return back + '<h1 class="h2">Apariencia</h1>' + banners() +
+        '<div class="seg" role="group" aria-label="Tema"><button data-a="theme" data-v="system" aria-pressed="' + (th === 'system') + '">Sistema</button><button data-a="theme" data-v="light" aria-pressed="' + (th === 'light') + '">Claro</button><button data-a="theme" data-v="dark" aria-pressed="' + (th === 'dark') + '">Oscuro</button></div>' +
+        '<div class="muted">"Sistema" sigue el modo claro u oscuro de tu teléfono o computadora. Esta opción se guarda en este dispositivo.</div>';
+    }
+    if (sub === 'profile' && CLOUD && user) {
+      var pd = profDraft || { username: '', avatar: '' }, pf2 = S.profile || {};
+      return back + '<h1 class="h2">Tu perfil</h1>' + banners() +
+        (pf2.available === false ? '<div class="banner bad" role="alert">Falta actualizar la base de datos: ejecuta schema.sql completo en el SQL Editor de Supabase y recarga.</div>' : '') +
+        '<div class="card"><div class="rowl">' + pic(pd.avatar, pd.username || user.email, 'xl') +
+        '<div class="col"><label class="btn quiet small" for="avfile">' + (pd.avatar ? 'Cambiar foto' : 'Subir foto') + '</label>' +
+        '<input id="avfile" class="file" type="file" accept="image/*">' +
+        (pd.avatar ? '<button class="linkbtn" data-a="rm-avatar">Quitar foto</button>' : '') + '</div></div>' +
+        '<div class="muted">La foto es opcional y solo la ves tú.</div></div>' +
+        '<div class="card"><div class="field"><label class="label" for="pu">Usuario</label><input id="pu" maxlength="20" autocapitalize="none" autocomplete="username" placeholder="ej. daniela_14" value="' + esc(pd.username) + '"></div>' +
+        '<div class="muted">De 3 a 20 caracteres: letras sin acento, números, punto o guion bajo.</div>' +
+        '<div class="field"><label class="label" for="pe">Correo</label><input id="pe" value="' + esc(user.email || '') + '" disabled></div>' +
+        (msg ? '<div class="' + (msgOk ? 'muted' : 'err') + '" role="alert">' + esc(msg) + '</div>' : '') +
+        '<button class="btn" data-a="save-profile"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Guardando…' : 'Guardar perfil') + '</button></div>' +
+        '<button class="btn quiet" data-a="logout">Cerrar sesión</button>';
     }
     if (sub === 'cats') {
       var hc = back + '<h1 class="h2">Categorías</h1>' + banners() + (topMsg ? '<div class="banner bad" role="alert">' + esc(topMsg) + '</div>' : '');
@@ -425,7 +545,7 @@
     if (sub === 'backup') {
       var hb = back + '<h1 class="h2">' + (CLOUD ? 'Exportar e importar' : 'Copia de seguridad') + '</h1>' + banners() +
         '<div class="muted">' + (CLOUD ? 'Tus datos ya están guardados en la nube. Aun así, puedes copiar una versión en texto para tenerla a mano.' : 'Tus datos viven solo en este navegador. Copia este texto y guárdalo en un lugar seguro (por ejemplo, envíatelo por WhatsApp).') + '</div>' +
-        '<textarea class="box" id="bk" readonly aria-label="Copia de seguridad">' + esc(JSON.stringify(S)) + '</textarea>' +
+        '<textarea class="box" id="bk" readonly aria-label="Copia de seguridad">' + esc(JSON.stringify(S, function (k, v) { return k === 'profile' ? undefined : v; })) + '</textarea>' +
         '<button class="btn" data-a="copy-backup">Copiar copia de seguridad</button>' +
         '<div class="card"><div class="label">' + (CLOUD ? 'Importar' : 'Restaurar') + '</div><div class="muted">' +
         (CLOUD ? 'Pega aquí una copia de la versión de archivo único de Cuadre. Se suma a lo que ya tienes, sin borrar nada.' : 'Pega aquí una copia anterior. Reemplaza lo que tengas ahora.') + '</div>' +
@@ -455,21 +575,29 @@
     $app.innerHTML = '<div class="auth"><div class="brand">Cuadre</div>' +
       '<div class="muted">' + (signup ? 'Crea tu cuenta para guardar tus finanzas en la nube y usarlas desde cualquier dispositivo.' : 'Inicia sesión para ver tus finanzas.') + '</div>' +
       '<form id="authform" novalidate>' +
-      '<div class="field"><label class="label" for="em">Correo</label><input id="em" type="email" autocomplete="email" inputmode="email" autocapitalize="none" required></div>' +
-      '<div class="field"><label class="label" for="pw">Contraseña</label><input id="pw" type="password" autocomplete="' + (signup ? 'new-password' : 'current-password') + '" minlength="6" required></div>' +
+      (signup ? '<div class="field"><label class="label" for="un">Usuario</label><input id="un" maxlength="20" autocomplete="username" autocapitalize="none" placeholder="ej. daniela_14" value="' + esc(authDraft.username) + '" required></div>' : '') +
+      '<div class="field"><label class="label" for="em">Correo</label><input id="em" type="email" autocomplete="email" inputmode="email" autocapitalize="none" value="' + esc(authDraft.email) + '" required></div>' +
+      '<div class="field"><label class="label" for="pw">Contraseña</label><input id="pw" type="password" autocomplete="' + (signup ? 'new-password' : 'current-password') + '" minlength="' + (signup ? 8 : 6) + '" required></div>' +
+      (signup ? '<div class="field"><label class="label" for="pw2">Confirmar contraseña</label><input id="pw2" type="password" autocomplete="new-password" required></div><div class="muted">Mínimo 8 caracteres.</div>' : '') +
       (authMsg ? '<div class="' + (authMsg.ok ? 'muted' : 'err') + '" role="alert">' + esc(authMsg.text) + '</div>' : '') +
       '<button class="btn" type="submit"' + (authBusy ? ' disabled' : '') + '>' + (authBusy ? 'Un momento…' : signup ? 'Crear cuenta' : 'Entrar') + '</button></form>' +
       '<button class="switch" data-a="auth-switch">' + (signup ? 'Ya tengo cuenta · Entrar' : 'No tengo cuenta · Crear una') + '</button></div>';
   }
   async function submitAuth() {
     var email = document.getElementById('em').value.trim(), pw = document.getElementById('pw').value;
-    if (!email || !pw) { authMsg = { ok: false, text: 'Escribe tu correo y tu contraseña.' }; renderAuth(); return; }
-    if (authMode === 'signup' && pw.length < 6) { authMsg = { ok: false, text: 'La contraseña debe tener al menos 6 caracteres.' }; renderAuth(); return; }
+    var signupMode = authMode === 'signup', un = signupMode ? normUser(document.getElementById('un').value) : '', pw2 = signupMode ? document.getElementById('pw2').value : '';
+    authDraft.email = email; if (signupMode) authDraft.username = un;
+    var bad = null;
+    if (!email || !pw) bad = 'Escribe tu correo y tu contraseña.';
+    else if (signupMode && !validUser(un)) bad = 'El usuario debe tener de 3 a 20 caracteres: letras sin acento, números, punto o guion bajo.';
+    else if (signupMode && pw.length < 8) bad = 'La contraseña debe tener al menos 8 caracteres.';
+    else if (signupMode && pw !== pw2) bad = 'Las contraseñas no coinciden.';
+    if (bad) { authMsg = { ok: false, text: bad }; renderAuth(); return; }
     authBusy = true; authMsg = null; renderAuth();
     try {
       var r;
       if (authMode === 'signup') {
-        r = check(await sb.auth.signUp({ email: email, password: pw }));
+        r = check(await sb.auth.signUp({ email: email, password: pw, options: { data: { username: un } } }));
         if (!r.data || !r.data.session) {
           authBusy = false; authMode = 'login';
           authMsg = { ok: true, text: 'Cuenta creada. Te enviamos un correo para confirmarla; ábrelo y luego inicia sesión aquí.' };
@@ -479,7 +607,7 @@
         r = check(await sb.auth.signInWithPassword({ email: email, password: pw }));
       }
       user = r.data.user || r.data.session.user;
-      authBusy = false; authMsg = null;
+      authBusy = false; authMsg = null; authDraft = { email: '', username: '' };
       await startApp();
     } catch (e) {
       authBusy = false; authMsg = { ok: false, text: humanError(e) }; renderAuth();
@@ -575,6 +703,41 @@
     if (ok) { sheet = null; renderSheet(); render(); } else if (sheet) { sheet.saving = false; sheet.confirmDelete = false; renderSheet(false); }
   }
 
+  /* ---------- 11b. Cuentas y perfil ---------- */
+  async function saveAccountEdit() {
+    var e = editAcc; if (!e || e.saving) return;
+    var a = accById(e.id), name = e.name.trim();
+    if (!a) return;
+    if (!name) { e.msg = 'Ponle un nombre a la cuenta'; render(); return; }
+    if (S.accounts.some(function (x) { return x.id !== a.id && x.currency === a.currency && x.name.toLowerCase() === name.toLowerCase(); })) { e.msg = 'Ya tienes una cuenta con ese nombre en esa moneda'; render(); return; }
+    var fields = { name: name };
+    if ((e.logo || '') !== (a.logo || '')) fields.logo = e.logo || null;
+    e.saving = true; e.msg = null; render();
+    var ok = await act(async function () {
+      await B.saveAccount(a.id, fields);
+      a.name = name; if ('logo' in fields) a.logo = e.logo || '';
+      persist();
+    });
+    if (ok) { editAcc = null; sub = 'accounts'; toast('Cuenta actualizada'); }
+    else if (editAcc) { editAcc.saving = false; }
+    render();
+  }
+  function startProfileDraft() {
+    var pf = S.profile || {};
+    profDraft = { username: pf.username || '', avatar: pf.avatar || '' };
+  }
+  async function saveProfileClick() {
+    if (busy || !profDraft) return;
+    var un = normUser(profDraft.username);
+    if (un && !validUser(un)) { msg = 'El usuario debe tener de 3 a 20 caracteres: letras sin acento, números, punto o guion bajo.'; msgOk = false; render(); return; }
+    busy = true; msg = null; render();
+    var next = { available: true, username: un, avatar: profDraft.avatar || '' };
+    var ok = await act(async function () { await B.saveProfile(next); S.profile = next; persist(); });
+    busy = false;
+    if (ok) { profDraft = { username: un, avatar: next.avatar }; msg = 'Perfil guardado.'; msgOk = true; } else { msg = 'No se pudo guardar el perfil.'; msgOk = false; }
+    render();
+  }
+
   /* ---------- 12. Tasa BCV ---------- */
   async function fetchBcv() {
     var ctrl = new AbortController(), timer = setTimeout(function () { ctrl.abort(); }, 8000);
@@ -650,6 +813,8 @@
   document.addEventListener('input', function (ev) {
     var t = ev.target;
     if (t.id === 'q') { query = t.value; var l = document.getElementById('list'); if (l) l.innerHTML = movesList(); return; }
+    if (t.id === 'en' && editAcc) { editAcc.name = t.value; return; }
+    if (t.id === 'pu' && profDraft) { profDraft.username = t.value; return; }
     if (sheet && t.dataset && t.dataset.f) sheet[t.dataset.f] = t.value;
   });
   document.addEventListener('submit', function (ev) {
@@ -664,8 +829,15 @@
       if (a === 'close') { sheet = null; renderSheet(); return; }
       if (a === 'auth-switch') { authMode = authMode === 'login' ? 'signup' : 'login'; authMsg = null; renderAuth(); return; }
       if (a === 'tab') { tab = v; sub = 'menu'; msg = null; topMsg = null; render(); window.scrollTo(0, 0); return; }
+      if (a === 'goto-profile') { tab = 'more'; sub = 'profile'; msg = null; startProfileDraft(); render(); window.scrollTo(0, 0); return; }
       if (a === 'goto-rate') { tab = 'more'; sub = 'rate'; msg = null; render(); window.scrollTo(0, 0); return; }
-      if (a === 'sub') { sub = v; msg = null; topMsg = null; rateErr = null; render(); window.scrollTo(0, 0); return; }
+      if (a === 'sub') { sub = v; msg = null; topMsg = null; rateErr = null; if (v === 'profile') startProfileDraft(); render(); window.scrollTo(0, 0); return; }
+      if (a === 'theme') { setTheme(v); render(); return; }
+      if (a === 'edit-acc') { var ea0 = accById(id); if (!ea0) return; editAcc = { id: id, name: ea0.name, logo: ea0.logo || '', msg: null, saving: false }; sub = 'acc-edit'; render(); window.scrollTo(0, 0); return; }
+      if (a === 'rm-logo') { editAcc.logo = ''; render(); return; }
+      if (a === 'save-acc') { await saveAccountEdit(); return; }
+      if (a === 'rm-avatar') { profDraft.avatar = ''; render(); return; }
+      if (a === 'save-profile') { await saveProfileClick(); return; }
       if (a === 'disp') { S.displayCurrency = v; persist(); render(); return; }
       if (a === 'filter') { filter = v; render(); return; }
       if (a === 'new') { openSheet(null); return; }
@@ -744,6 +916,24 @@
         busy = false; render(); return;
       }
     } catch (e) { toast(humanError(e)); }
+  });
+  document.addEventListener('change', async function (ev) {
+    var t = ev.target, f = t && t.files && t.files[0];
+    if (!f) return;
+    try {
+      if (t.id === 'logofile' && editAcc) {
+        editAcc.logo = safeImg(await imageToDataUrl(f, 96, 'image/png')); editAcc.msg = editAcc.logo ? null : 'No se pudo usar esa imagen.';
+        if (editAcc.logo.length > 60000) { editAcc.logo = ''; editAcc.msg = 'Esa imagen es demasiado pesada. Prueba con una más simple.'; }
+        render();
+      } else if (t.id === 'avfile' && profDraft) {
+        profDraft.avatar = safeImg(await imageToDataUrl(f, 256, 'image/jpeg', 0.85)); msg = profDraft.avatar ? null : 'No se pudo usar esa imagen.'; msgOk = false;
+        render();
+      }
+    } catch (e) {
+      if (t.id === 'logofile' && editAcc) editAcc.msg = 'No se pudo leer esa imagen. Prueba con otra (JPG o PNG).';
+      else { msg = 'No se pudo leer esa imagen. Prueba con otra (JPG o PNG).'; msgOk = false; }
+      render();
+    }
   });
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && sheet) { sheet = null; renderSheet(); } });
 
