@@ -97,10 +97,12 @@ button { cursor: pointer; border: 0; background: none; }
 .empty { text-align: center; padding: 32px 8px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
 .empty .big { font-size: 40px; }
 .nav { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); display: flex; justify-content: center; z-index: 5; }
-.nav .in { width: 100%; max-width: 520px; display: grid; grid-template-columns: 1fr 1fr 64px 1fr; gap: 4px; align-items: center; }
+.nav .in { width: 100%; max-width: 520px; display: grid; grid-template-columns: 1fr 1fr 64px 1fr 1fr; gap: 4px; align-items: center; }
 .nav .plus { width: 56px; height: 56px; min-height: 56px; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: 32px; line-height: 1; justify-self: center; box-shadow: var(--shadow); margin-top: -22px; display: grid; place-items: center; }
 .nav button { min-height: 52px; border-radius: var(--r-md); font-size: 13px; font-weight: 700; color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.nav button { position: relative; }
 .nav button .e { font-size: 20px; }
+.nav .dot { position: absolute; top: 2px; right: calc(50% - 22px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--expense); color: #fff; font-size: 11px; font-style: normal; font-weight: 800; display: grid; place-items: center; }
 .nav button[aria-current="page"] { color: var(--accent); background: var(--surface-2); }
 .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 10; display: flex; align-items: flex-end; justify-content: center; }
 .sheet { background: var(--bg); width: 100%; max-width: 520px; max-height: 94%; overflow-y: auto; border-radius: var(--r-lg) var(--r-lg) 0 0; padding: 18px 16px calc(24px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 16px; }
@@ -147,6 +149,25 @@ textarea.box { width: 100%; min-height: 110px; border-radius: var(--r-md); borde
 .slide-thumb { position: absolute; left: 4px; top: 4px; width: 50px; height: 50px; border-radius: 50%; background: var(--expense); color: #fff; font-size: 28px; font-weight: 800; line-height: 1; display: grid; place-items: center; touch-action: none; cursor: grab; }
 .linkbtn.plain { color: var(--muted); align-self: center; }
 .dangerzone { background: transparent; border: 0; padding: 0; }
+/* v0.4: pagos, avisos, presupuestos y gastos divididos */
+.item { display: flex; gap: 8px; align-items: stretch; }
+.item .tx { flex: 1; min-width: 0; }
+.paybtn { flex: none; align-self: center; min-height: 44px; padding: 0 16px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-weight: 800; font-size: 14px; }
+.agi.soon { border-color: var(--warn); }
+.agi.today, .agi.late { border-color: var(--expense); background: color-mix(in srgb, var(--expense) 8%, var(--surface)); }
+.tagl { color: var(--expense) !important; font-weight: 800; }
+.pbar { display: block !important; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-top: 4px; }
+.pbar i { display: block; height: 100%; background: var(--accent); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid2 .num { font-size: 20px; overflow-wrap: anywhere; }
+.hero.small { font-size: clamp(26px, 8vw, 32px); }
+.bar.warnb i { background: var(--warn); }
+.bar.over i { background: var(--expense); }
+.banner.firm { text-align: left; width: 100%; font-weight: 800; }
+.sprow { display: grid; grid-template-columns: 1fr 110px 36px; gap: 8px; align-items: center; }
+.sprow input { min-height: 48px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface); padding: 0 12px; width: 100%; }
+.field input[type="date"] { appearance: none; -webkit-appearance: none; text-align: left; }
+.seg button { font-size: 15px; }
 </style>
 </head>
 <body>
