@@ -114,6 +114,14 @@
     if (/foreign key|restrict/i.test(m)) return 'No se puede eliminar porque tiene movimientos asociados.';
     return 'Algo salió mal: ' + m;
   }
+  // Errores al cargar: muestra el texto real de la base de datos (sirve para diagnosticar).
+  function loadError(e) {
+    var m = (e && (e.message || e.error_description)) || String(e || '');
+    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Sin conexión. Inténtalo de nuevo cuando tengas internet.';
+    if (/user_id_fkey|auth\.users|not present in table "users"/i.test(m)) return 'Tu sesión es de otro proyecto o de un usuario que ya no existe. Pulsa "Cerrar sesión" y crea la cuenta de nuevo. (' + m + ')';
+    if (/schema cache|does not exist|relation/i.test(m)) return 'Faltan las tablas en Supabase: ejecuta schema.sql completo en el SQL Editor. (' + m + ')';
+    return m + (e && e.code ? ' [' + e.code + ']' : '');
+  }
   var toastTimer = null;
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -664,7 +672,7 @@
       if (a === 'edit') { openSheet(id); return; }
       if (a === 'retry') { await startApp(); return; }
       if (a === 'logout') {
-        await sb.auth.signOut();
+        try { await sb.auth.signOut({ scope: 'local' }); } catch (e) { /* si falla, igual se limpia abajo */ }
         user = null; S = null; tab = 'home'; sub = 'menu'; authMode = 'login'; authMsg = null; renderAuth(); return;
       }
       if (a === 'stype') { sheet.type = v; sheet.categoryId = (catsFor(v)[0] || {}).id || null; renderSheet(false); return; }
@@ -743,7 +751,8 @@
   function renderFatal(text, canRetry) {
     $navwrap.hidden = true;
     $app.innerHTML = '<div class="auth"><div class="brand">Cuadre</div><div class="banner bad" role="alert">' + esc(text) + '</div>' +
-      (canRetry ? '<button class="btn" data-a="retry">Reintentar</button>' : '') + '</div>';
+      (canRetry ? '<button class="btn" data-a="retry">Reintentar</button>' : '') +
+      (CLOUD && sb ? '<button class="btn quiet" data-a="logout">Cerrar sesión</button>' : '') + '</div>';
   }
   async function startApp() {
     if (!CLOUD) {
@@ -757,7 +766,7 @@
     } catch (e) {
       var cached = cacheLoad();
       if (cached) { S = cached; offline = true; }
-      else { S = null; renderFatal('No se pudieron cargar tus datos. ' + humanError(e), true); return; }
+      else { S = null; renderFatal('No se pudieron cargar tus datos. ' + loadError(e), true); return; }
     }
     render(); autoRate();
   }
