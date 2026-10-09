@@ -139,6 +139,14 @@ textarea.box { width: 100%; min-height: 110px; border-radius: var(--r-md); borde
 .file:focus-visible + .linkbtn, .file:focus-visible ~ * { outline: 3px solid var(--accent); }
 .linkbtn { color: var(--expense); font-weight: 800; min-height: 44px; text-align: left; padding: 0 4px; }
 .link .pic { margin-right: 0; }
+/* v0.3: deslizar para confirmar eliminación */
+.slidebox { display: flex; flex-direction: column; gap: 8px; }
+.slide { position: relative; height: 60px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--expense); overflow: hidden; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; touch-action: none; }
+.slide-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--expense); opacity: .35; pointer-events: none; }
+.slide-txt { position: relative; font-weight: 800; color: var(--expense); padding-left: 52px; pointer-events: none; }
+.slide-thumb { position: absolute; left: 4px; top: 4px; width: 50px; height: 50px; border-radius: 50%; background: var(--expense); color: #fff; font-size: 28px; font-weight: 800; line-height: 1; display: grid; place-items: center; touch-action: none; cursor: grab; }
+.linkbtn.plain { color: var(--muted); align-self: center; }
+.dangerzone { background: transparent; border: 0; padding: 0; }
 </style>
 </head>
 <body>
@@ -152,4 +160,3 @@ textarea.box { width: 100%; min-height: 110px; border-radius: var(--r-md); borde
 <script src="app.js"></script>
 </body>
 </html>
-
