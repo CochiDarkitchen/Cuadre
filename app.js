@@ -19,6 +19,12 @@
     SUPABASE_ANON_KEY: 'sb_publishable_JXA4mOZJH3eRJeKd8s6YZw_Y4shklIr'    // Ejemplo: 'eyJhbGciOi...'
   };
 
+  // Limpia lo pegado: agrega https:// si falta y quita barras o rutas de más (/rest/v1).
+  (function () {
+    var u = String(CONFIG.SUPABASE_URL || '').trim();
+    if (u) { if (!/^https?:\/\//i.test(u)) u = 'https://' + u; u = u.replace(/\/+$/, '').replace(/\/(rest|auth)\/v1.*$/i, ''); }
+    CONFIG.SUPABASE_URL = u; CONFIG.SUPABASE_ANON_KEY = String(CONFIG.SUPABASE_ANON_KEY || '').trim();
+  })();
   var CLOUD = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
   var LOCAL_KEY = 'cuadre:web:v1';
   var DISPLAY_KEY = 'cuadre:display';
@@ -103,6 +109,7 @@
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function humanError(e) {
     var m = (e && (e.message || e.error_description)) || String(e || '');
+    if (/not valid JSON|Unexpected token/i.test(m)) return 'No se pudo conectar con Supabase. Revisa que SUPABASE_URL en app.js sea la de tu proyecto (https://…supabase.co).';
     if (/Failed to fetch|NetworkError|Load failed|network|fetch/i.test(m)) return 'Sin conexión. Inténtalo de nuevo cuando tengas internet.';
     if (/Invalid login credentials/i.test(m)) return 'Correo o contraseña incorrectos.';
     if (/Email not confirmed/i.test(m)) return 'Primero confirma tu correo: revisa tu bandeja de entrada.';
