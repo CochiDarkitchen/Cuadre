@@ -15,8 +15,8 @@
      las reglas de schema.sql (cada persona solo ve sus propios datos).
      NUNCA pegues aquí la clave "service_role". */
   var CONFIG = {
-    SUPABASE_URL: '',        // Ejemplo: 'https://abcdefgh.supabase.co'
-    SUPABASE_ANON_KEY: ''    // Ejemplo: 'eyJhbGciOi...'
+    SUPABASE_URL: 'https:qfkmtxekvywlcgfimwsg',        // Ejemplo: ''
+    SUPABASE_ANON_KEY: 'sb_publishable_JXA4mOZJH3eRJeKd8s6YZw_Y4shklIr'    // Ejemplo: 'eyJhbGciOi...'
   };
 
   var CLOUD = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
