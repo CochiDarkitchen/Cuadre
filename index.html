@@ -118,6 +118,8 @@ button { cursor: pointer; border: 0; background: none; }
 textarea.box { width: 100%; min-height: 110px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface); color: var(--fg); padding: 12px; font-size: 13px; font-family: ui-monospace, Menlo, Consolas, monospace; }
 @media (prefers-reduced-motion: no-preference) { .btn, .chip, .tx, .link { transition: transform .08s ease; } .btn:active, .chip:active, .tx:active, .link:active { transform: scale(.98); } }
 [hidden] { display: none !important; }
+.receipt-preview { display:block; width:100%; max-height:360px; object-fit:contain; border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface); margin-top:10px; }
+.field select, select { width:100%; min-height:48px; border-radius:var(--r-md); border:1px solid var(--line); background:var(--surface); color:var(--fg); padding:0 12px; font:inherit; }
 .auth { max-width: 420px; margin-inline: auto; padding-block: 48px 40px; display: flex; flex-direction: column; gap: 16px; }
 .auth .brand { font-size: 40px; }
 .auth form { display: flex; flex-direction: column; gap: 14px; }
@@ -178,6 +180,8 @@ textarea.box { width: 100%; min-height: 110px; border-radius: var(--r-md); borde
 
 <!-- Supabase (versión fija). Si no configuras Supabase en app.js, la app funciona igual guardando en este navegador. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<!-- SheetJS permite exportar a .xlsx. La exportación CSV de respaldo no requiere esta librería. -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
