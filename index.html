@@ -289,10 +289,91 @@ body {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
+
+
+/* Cuadre v0.7 · Motion Edition: movimiento sutil, rápido y accesible */
+@keyframes cuadre-enter-up {
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes cuadre-sheet-rise {
+  from { opacity: .65; transform: translate3d(0, 24px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes cuadre-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cuadre-bar-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes cuadre-soft-pop { 0% { transform: scale(.94); } 70% { transform: scale(1.025); } 100% { transform: scale(1); } }
+@keyframes cuadre-goal-glow {
+  0% { box-shadow: var(--shadow); }
+  45% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent), var(--shadow); }
+  100% { box-shadow: var(--shadow); }
+}
+@keyframes cuadre-plus-in { from { opacity: 0; transform: translateY(7px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+#app.motion-enter > * { animation: cuadre-enter-up .42s cubic-bezier(.2,.75,.25,1) both; }
+#app.motion-enter > :nth-child(2) { animation-delay: 35ms; }
+#app.motion-enter > :nth-child(3) { animation-delay: 65ms; }
+#app.motion-enter > :nth-child(4) { animation-delay: 95ms; }
+#app.motion-enter > :nth-child(5) { animation-delay: 125ms; }
+#app.motion-enter > :nth-child(n+6) { animation-delay: 145ms; }
+#app.motion-enter .bar > i, #app.motion-enter .pbar > i { transform-origin: left center; animation: cuadre-bar-fill .72s cubic-bezier(.2,.7,.25,1) both; }
+#app.motion-enter .tx { animation: cuadre-enter-up .35s cubic-bezier(.2,.75,.25,1) both; }
+#app.motion-enter .tx:nth-child(2) { animation-delay: 35ms; }
+#app.motion-enter .tx:nth-child(3) { animation-delay: 65ms; }
+#app.motion-enter .tx:nth-child(4) { animation-delay: 95ms; }
+#app.motion-enter .tx:nth-child(n+5) { animation-delay: 120ms; }
+.card, .tx, .link, .chip, .btn, .nav button, .chip-rate { -webkit-tap-highlight-color: transparent; }
+@media (hover: hover) and (pointer: fine) {
+  #app .card:not(.dangerzone):hover { transform: translateY(-1px); }
+  #app .tx:hover, #app .link:hover { transform: translateY(-1px); }
+  .nav button:not(.plus):hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+  .nav .plus:hover { transform: translateY(-2px) scale(1.035); }
+}
+.nav .plus { transition: transform .18s cubic-bezier(.2,.75,.25,1), box-shadow .18s ease, background-color .2s ease; }
+.nav .plus[aria-expanded="true"] { transform: rotate(45deg); }
+.scrim { animation: cuadre-scrim-in .18s ease-out both; }
+.scrim .sheet { animation: cuadre-sheet-rise .28s cubic-bezier(.2,.75,.25,1) both; }
+.auth { animation: cuadre-enter-up .42s cubic-bezier(.2,.75,.25,1) both; }
+.goal-complete { animation: cuadre-goal-glow .8s ease-out both; }
+.quick-actions {
+  position: fixed; z-index: 8; left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom, 0px)) + 87px);
+  transform: translateX(-50%); width: min(calc(100% - 32px), 420px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px;
+  padding: 10px; border-radius: 22px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 16px 48px rgba(8,24,14,.19); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+}
+.quick-actions[hidden], .nav[hidden] { display: none !important; }
+.quick-action {
+  min-height: 78px; padding: 10px 6px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--fg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; font-weight: 750; font-size: 12px;
+  transition: transform .16s ease, border-color .16s ease, background-color .16s ease;
+}
+.quick-action .quick-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 11px; background: color-mix(in srgb, var(--accent) 13%, var(--surface)); color: var(--accent); font-size: 19px; }
+.quick-action:active { transform: scale(.97); }
+.quick-actions:not([hidden]) .quick-action { animation: cuadre-plus-in .23s cubic-bezier(.2,.75,.25,1) both; }
+.quick-actions:not([hidden]) .quick-action:nth-child(2) { animation-delay: 35ms; }
+.quick-actions:not([hidden]) .quick-action:nth-child(3) { animation-delay: 70ms; }
+.toast:not([hidden]) { animation: cuadre-enter-up .22s cubic-bezier(.2,.75,.25,1) both; }
+html.theme-animating body, html.theme-animating .card, html.theme-animating .nav, html.theme-animating .nav button,
+html.theme-animating .quick-actions, html.theme-animating .quick-action, html.theme-animating .tx, html.theme-animating .link,
+html.theme-animating .chip, html.theme-animating .seg, html.theme-animating .field input, html.theme-animating .sheet,
+html.theme-animating .auth, html.theme-animating .banner, html.theme-animating .toast {
+  transition: color .24s ease, background-color .24s ease, border-color .24s ease, box-shadow .24s ease;
+}
+@media (max-width: 420px) {
+  .quick-actions { bottom: calc(max(12px, env(safe-area-inset-bottom, 0px)) + 82px); width: calc(100% - 24px); gap: 7px; padding: 8px; }
+  .quick-action { min-height: 72px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #app.motion-enter > *, #app.motion-enter .tx, .scrim, .scrim .sheet, .auth, .goal-complete,
+  .quick-actions:not([hidden]) .quick-action { animation: none !important; }
+  #app.motion-enter .bar > i, #app.motion-enter .pbar > i { animation: none !important; }
+  .nav .plus, .quick-action { transition: none !important; }
+}
+
 </style>
 </head>
 <body>
 <div class="wrap" id="app"></div>
+<div class="quick-actions" id="quick-actions" aria-label="Acciones rápidas" hidden></div>
 <nav class="nav" id="navwrap" aria-label="Navegación principal" hidden><div class="in" id="nav"></div></nav>
 <div id="sheet"></div>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
