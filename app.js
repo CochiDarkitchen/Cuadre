@@ -17,6 +17,7 @@
   var CONFIG = {
     SUPABASE_URL: 'https://qfkmtxekvywlcgfimwsg.supabase.co',        // Ejemplo: ''
     SUPABASE_ANON_KEY: 'sb_publishable_JXA4mOZJH3eRJeKd8s6YZw_Y4shklIr'    // Ejemplo: 'eyJhbGciOi...'
+    VAPID_PUBLIC_KEY: ''   // Clave pública Web Push (opcional; nunca pongas aquí la clave privada)
   };
 
   // Limpia lo pegado: agrega https:// si falta y quita barras o rutas de más (/rest/v1).
@@ -211,6 +212,8 @@
   function norm(d) {
     d.scheduled = d.scheduled || []; d.plans = d.plans || []; d.debts = d.debts || []; d.budgets = d.budgets || [];
     d.transfers = Array.isArray(d.transfers) ? d.transfers : []; d.goals = Array.isArray(d.goals) ? d.goals : []; d.rateHistory = Array.isArray(d.rateHistory) ? d.rateHistory : [];
+    d.goalContributions = Array.isArray(d.goalContributions) ? d.goalContributions : [];
+    d.familySpaces = Array.isArray(d.familySpaces) ? d.familySpaces : []; d.familyExpenses = Array.isArray(d.familyExpenses) ? d.familyExpenses : [];
     d.allocation = Object.assign({ invest: 10, enjoyment: 20, savings: 20, emergency: 10, needs: 40 }, d.allocation || {});
     if (!d.rateHistory.length && d.rate && Number(d.rate.rateE4) > 0) d.rateHistory.push({ rateE4: Number(d.rate.rateE4), source: d.rate.source || 'none', recordedAt: d.rate.updatedAt || new Date().toISOString() });
     d.prefs = d.prefs || { remindDays: 3 }; if (!(d.prefs.remindDays >= 0)) d.prefs.remindDays = 3;
@@ -227,7 +230,7 @@
       accounts: [['Efectivo Bs', 'VES'], ['Efectivo $', 'USD'], ['Banco 1', 'VES'], ['Banco 2', 'VES'], ['Binance', 'USD']].map(function (a) {
         return { id: uuid(), name: a[0], currency: a[1], openingMinor: 0, createdAt: now };
       }),
-      categories: cats, transactions: [], transfers: [], goals: [], rateHistory: [],
+      categories: cats, transactions: [], transfers: [], goals: [], goalContributions: [], rateHistory: [], familySpaces: [], familyExpenses: [],
       allocation: { invest: 10, enjoyment: 20, savings: 20, emergency: 10, needs: 40 },
       rate: { rateE4: 0, updatedAt: null, source: 'none' },
       displayCurrency: 'VES'
@@ -282,6 +285,31 @@
     }
     return out;
   }
+  async function loadFamilyData() {
+    var empty = { spaces: [], expenses: [], missing: false };
+    if (!CLOUD || !user) return empty;
+    try {
+      var memberships = check(await sb.from('family_members').select('space_id,role').eq('user_id', user.id)).data || [];
+      var ids = memberships.map(function (m) { return m.space_id; }).filter(Boolean);
+      if (!ids.length) return empty;
+      var q1 = check(await sb.from('family_spaces').select('id,name,owner_id,created_at').in('id', ids).order('created_at', { ascending: true }));
+      var q2 = check(await sb.from('family_expenses').select('*').in('space_id', ids).order('date', { ascending: false }).order('created_at', { ascending: false }).limit(1000));
+      return {
+        spaces: (q1.data || []).map(function (x) { var m = memberships.filter(function (z) { return z.space_id === x.id; })[0] || {}; return { id: x.id, name: x.name, ownerId: x.owner_id, role: m.role || 'member', createdAt: x.created_at }; }),
+        expenses: (q2.data || []).map(function (x) { return { id: x.id, spaceId: x.space_id, createdBy: x.created_by, title: x.title, amountMinor: Number(x.amount_minor), currency: x.currency, category: x.category || '', paidBy: x.paid_by || '', dateISO: x.date, note: x.note || '', createdAt: x.created_at }; }),
+        missing: false
+      };
+    } catch (e) {
+      if (/schema cache|does not exist|Could not find|relation/i.test((e && e.message) || '')) return { spaces: [], expenses: [], missing: true };
+      throw e;
+    }
+  }
+  async function refreshFamilyData() {
+    var f = await loadFamilyData();
+    S.familySpaces = f.spaces; S.familyExpenses = f.expenses; S.familyMissing = f.missing;
+    if (!selectedFamilyId()) activeFamilyId = S.familySpaces[0] ? S.familySpaces[0].id : '';
+    persist();
+  }
   async function cloudLoad() {
     var st = check(await sb.from('settings').select('*').maybeSingle());
     if (!st.data) {
@@ -305,19 +333,21 @@
     } catch (e1) {
       if (/schema cache|does not exist|Could not find|relation/i.test((e1 && e1.message) || '')) ex.missing = true; else throw e1;
     }
-    var financeExtras = { transfers: [], goals: [], rateHistory: [] };
+    var financeExtras = { transfers: [], goals: [], rateHistory: [], goalContributions: [] };
     try {
-      var r3 = await Promise.all([fetchAll('account_transfers', 'created_at', true), fetchAll('savings_goals', 'created_at', true), fetchAll('exchange_rate_history', 'recorded_at', true)]);
+      var r3 = await Promise.all([fetchAll('account_transfers', 'created_at', true), fetchAll('savings_goals', 'created_at', true), fetchAll('exchange_rate_history', 'recorded_at', true), fetchAll('goal_contributions', 'created_at', true)]);
       financeExtras.transfers = r3[0].map(function (x) { return { id: x.id, fromAccountId: x.from_account_id, toAccountId: x.to_account_id, fromAmountMinor: Number(x.from_amount_minor), toAmountMinor: Number(x.to_amount_minor), fromCurrency: x.from_currency, toCurrency: x.to_currency, rateE4: Number(x.rate_e4 || 0), dateISO: x.date, note: x.note || '', createdAt: x.created_at }; });
       financeExtras.goals = r3[1].map(function (x) { return { id: x.id, name: x.name, targetMinor: Number(x.target_minor), savedMinor: Number(x.saved_minor), currency: x.currency, dueDate: x.due_date || '', note: x.note || '', createdAt: x.created_at }; });
       financeExtras.rateHistory = r3[2].map(function (x) { return { id: x.id, rateE4: Number(x.rate_e4), source: x.source, recordedAt: x.recorded_at }; });
+      financeExtras.goalContributions = r3[3].map(function (x) { return { id: x.id, goalId: x.goal_id, amountMinor: Number(x.amount_minor), currency: x.currency, dateISO: x.date, note: x.note || '', createdAt: x.created_at }; });
     } catch (e3) {
       if (/schema cache|does not exist|Could not find|relation/i.test((e3 && e3.message) || '')) ex.missing = true; else throw e3;
     }
     if (!financeExtras.rateHistory.length && Number(s.rate_e4) > 0 && s.rate_updated_at) financeExtras.rateHistory.push({ rateE4: Number(s.rate_e4), source: s.rate_source || 'none', recordedAt: s.rate_updated_at });
+    var family = await loadFamilyData();
     return {
       version: 1,
-      profile: profile, scheduled: ex.scheduled, plans: ex.plans, debts: ex.debts, budgets: ex.budgets, transfers: financeExtras.transfers, goals: financeExtras.goals, rateHistory: financeExtras.rateHistory, extrasMissing: ex.missing,
+      profile: profile, scheduled: ex.scheduled, plans: ex.plans, debts: ex.debts, budgets: ex.budgets, transfers: financeExtras.transfers, goals: financeExtras.goals, goalContributions: financeExtras.goalContributions, rateHistory: financeExtras.rateHistory, extrasMissing: ex.missing,
       allocation: { invest: Number(s.alloc_invest == null ? 10 : s.alloc_invest), enjoyment: Number(s.alloc_enjoyment == null ? 20 : s.alloc_enjoyment), savings: Number(s.alloc_savings == null ? 20 : s.alloc_savings), emergency: Number(s.alloc_emergency == null ? 10 : s.alloc_emergency), needs: Number(s.alloc_needs == null ? 40 : s.alloc_needs) },
       prefs: { remindDays: Number.isInteger(s.remind_days) ? s.remind_days : 3 },
       ref: { eur: Number(s.eur_rate_e4) > 0 ? { rateE4: Number(s.eur_rate_e4), updatedAt: s.eur_updated_at || null } : null, par: Number(s.par_rate_e4) > 0 ? { rateE4: Number(s.par_rate_e4), updatedAt: s.par_updated_at || null } : null },
@@ -328,6 +358,7 @@
           categoryId: t.category_id, accountId: t.account_id, note: t.note || '', dateISO: t.date, createdAt: t.created_at, updatedAt: t.updated_at, split: Array.isArray(t.split) ? t.split : null, receiptImage: safeImg(t.receipt_image) };
       }),
       rate: { rateE4: Number(s.rate_e4 || 0), updatedAt: s.rate_updated_at || null, source: s.rate_source || 'none' },
+      familySpaces: family.spaces, familyExpenses: family.expenses, familyMissing: family.missing,
       displayCurrency: readDisplay()
     };
   }
@@ -369,6 +400,12 @@
     saveTransfer: async function (t) { if (CLOUD) check(await sb.from('account_transfers').upsert(transferRow(t))); },
     removeTransfer: async function (id) { if (CLOUD) check(await sb.from('account_transfers').delete().eq('id', id)); },
     saveGoal: async function (g) { if (CLOUD) check(await sb.from('savings_goals').upsert(goalRow(g))); },
+    saveGoalContribution: async function (c) { if (CLOUD) check(await sb.rpc('contribute_to_goal', { p_goal_id: c.goalId, p_amount_minor: c.amountMinor, p_date: c.dateISO, p_note: c.note || '' })); },
+    importGoalContributionRecord: async function (c) { if (CLOUD) check(await sb.from('goal_contributions').insert({ id: c.id, user_id: user.id, goal_id: c.goalId, amount_minor: c.amountMinor, currency: c.currency, date: c.dateISO, note: c.note || '', created_at: c.createdAt })); },
+    saveFamilyExpense: async function (e) { if (CLOUD) check(await sb.from('family_expenses').insert({ id: e.id, space_id: e.spaceId, created_by: user.id, title: e.title, amount_minor: e.amountMinor, currency: e.currency, category: e.category || '', paid_by: e.paidBy || '', date: e.dateISO, note: e.note || '', created_at: e.createdAt })); },
+    removeFamilyExpense: async function (id) { if (CLOUD) check(await sb.from('family_expenses').delete().eq('id', id)); },
+    savePushSubscription: async function (sub) { if (CLOUD) check(await sb.from('push_subscriptions').upsert({ user_id: user.id, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth, expiration_time: sub.expirationTime || null, updated_at: new Date().toISOString() }, { onConflict: 'endpoint' })); },
+    removePushSubscription: async function (endpoint) { if (CLOUD) check(await sb.from('push_subscriptions').delete().eq('endpoint', endpoint).eq('user_id', user.id)); },
     removeGoal: async function (id) { if (CLOUD) check(await sb.from('savings_goals').delete().eq('id', id)); },
     saveAllocation: async function (a) { if (CLOUD) check(await sb.from('settings').upsert({ user_id: user.id, alloc_invest: a.invest, alloc_enjoyment: a.enjoyment, alloc_savings: a.savings, alloc_emergency: a.emergency, alloc_needs: a.needs, updated_at: new Date().toISOString() })); },
     saveAccount: async function (id, fields) { if (CLOUD) check(await sb.from('accounts').update(fields).eq('id', id)); },
@@ -482,6 +519,45 @@
     });
     return sum;
   }
+  function monthDayInfo(dateStr) {
+    var a = String(dateStr || today()).split('-').map(Number), now = new Date(a[0], a[1] - 1, a[2]);
+    return { day: a[2], days: dim(a[0], a[1]), month: a[0] + '-' + p2(a[1]) };
+  }
+  function budgetPace(b) {
+    var spent = budgetSpent(b), mi = monthDayInfo(today()), projected = Math.round(spent / Math.max(1, mi.day) * mi.days), expected = b.limitMinor * mi.day / mi.days;
+    return { spent: spent, projected: projected, expected: expected, pct: b.limitMinor > 0 ? spent / b.limitMinor : 0, projectedPct: b.limitMinor > 0 ? projected / b.limitMinor : 0, ahead: spent > expected * 1.12 && mi.day < mi.days };
+  }
+  function reservedGoalTotal(disp) {
+    return (S.goals || []).reduce(function (sum, g) { return sum + toDisp(g.savedMinor, g.currency, disp); }, 0);
+  }
+  function obligationsWithin(days, disp) {
+    var end = addDays(today(), days), total = 0, start = today();
+    (S.scheduled || []).forEach(function (x) {
+      if (!x.active || !x.nextDue || !FREQ[x.frequency]) return;
+      var due = x.nextDue, guard = 0;
+      while (due < start && guard++ < 120) due = nextAfter(due, x.frequency, x.anchorDay);
+      guard = 0;
+      while (due >= start && due <= end && guard++ < 120) { total += toDisp(x.amountMinor, x.currency, disp); due = nextAfter(due, x.frequency, x.anchorDay); }
+    });
+    (S.plans || []).forEach(function (x) {
+      if (x.paidCount >= x.count) return;
+      var due = planDue(x); if (due >= start && due <= end) total += toDisp(planAmount(x, x.paidCount), x.currency, disp);
+    });
+    (S.debts || []).forEach(function (d) {
+      if (d.kind !== 'owe' || !d.dueDate || debtLeft(d) <= 0) return;
+      if (d.dueDate >= start && d.dueDate <= end) total += toDisp(debtLeft(d), d.currency, disp);
+    });
+    return total;
+  }
+  function availablePlan(disp) {
+    var balanceTotal = totalAvailable(disp), goals = reservedGoalTotal(disp), due = obligationsWithin(30, disp);
+    return { balance: balanceTotal, goalsReserved: goals, obligations30: due, available: balanceTotal - goals - due };
+  }
+  function monthForecast(disp) {
+    var month = today().slice(0, 7), info = monthDayInfo(today()), summary = monthSummary(month, disp), remaining = Math.max(0, info.days - info.day);
+    var dailyNet = (summary.inc - summary.exp) / Math.max(1, info.day);
+    return { currentNet: summary.inc - summary.exp, dailyNet: dailyNet, remainingDays: remaining, projectedChange: Math.round(dailyNet * remaining), projectedBalance: totalAvailable(disp) + Math.round(dailyNet * remaining), sampleDays: info.day };
+  }
   /* Avisos del teléfono: se muestran al abrir la app (no hay servidor que avise con la app cerrada). */
   function notifyEnabled() { try { return localStorage.getItem('cuadre:notify') === '1' && 'Notification' in window && Notification.permission === 'granted'; } catch (e) { return false; } }
   async function notifyOnOpen() {
@@ -582,8 +658,13 @@
     var urg = urgent(), firm = urg.filter(function (i) { return i.level === 'late' || i.level === 'today'; });
     if (firm.length) h += '<button class="banner bad firm" data-a="goto-pay">⚠️ ' + (firm.length === 1 ? 'Atención: ' : 'Atención, ' + firm.length + ' pagos: ') + firm.slice(0, 2).map(function (i) { return esc(i.title) + (i.level === 'late' ? ' (vencido)' : ' (vence hoy)'); }).join(' · ') + (firm.length > 2 ? ' y más' : '') + '</button>';
     h += '<div class="seg" role="group" aria-label="Moneda a mostrar"><button data-a="disp" data-v="VES" aria-pressed="' + (disp === 'VES') + '">Bs</button><button data-a="disp" data-v="USD" aria-pressed="' + (disp === 'USD') + '">$</button></div>';
-    h += '<div class="card"><div class="label">Disponible</div><div class="hero">' + fmt(total, disp) + '</div>' +
-      (rate > 0 ? '<div class="muted">≈ ' + fmt(convert(total, disp, other, rate), other) + '</div>' : '') + '</div>';
+    var plan = availablePlan(disp), forecast = monthForecast(disp);
+    h += '<div class="card"><div class="label">Saldo total</div><div class="hero">' + fmt(total, disp) + '</div>' +
+      (rate > 0 ? '<div class="muted">≈ ' + fmt(convert(total, disp, other, rate), other) + '</div>' : '') +
+      '<div class="dividerline" style="height:1px;background:var(--line);margin:8px 0"></div><div class="row"><span class="muted">Metas reservadas</span><span>' + fmt(plan.goalsReserved, disp) + '</span></div>' +
+      '<div class="row"><span class="muted">Pagos próximos · 30 días</span><span>' + fmt(plan.obligations30, disp) + '</span></div><div class="row"><b>Disponible estimado para gastar</b><b class="' + (plan.available < 0 ? '' : 'pos') + '">' + fmt(plan.available, disp) + '</b></div>' +
+      '<div class="muted">Estimación: saldo menos metas reservadas y obligaciones próximas. Las reservas no mueven dinero entre cuentas.</div></div>';
+    h += '<div class="card"><div class="label">Proyección al cierre del mes</div><div class="num">' + fmt(forecast.projectedBalance, disp) + '</div><div class="muted">Si mantienes el promedio neto diario de este mes: ' + (forecast.projectedChange >= 0 ? '+' : '−') + fmt(Math.abs(forecast.projectedChange), disp) + ' estimados en los ' + forecast.remainingDays + ' días restantes. Calculado con ' + forecast.sampleDays + ' día(s) de datos; no es una garantía.</div></div>';
     h += '<div class="card"><div class="label">' + monthLabel(month) + '</div><div class="row"><div class="col"><span class="muted">Ingresos</span><span class="num pos">' + fmt(sum.inc, disp) +
       '</span></div><div class="col" style="text-align:right"><span class="muted">Gastos</span><span class="num" style="color:var(--expense)">' + fmt(sum.exp, disp) + '</span></div></div>' +
       '<div class="muted">' + (sum.inc - sum.exp >= 0 ? 'Te queda a favor' : 'Gastaste de más') + ': ' + fmt(Math.abs(sum.inc - sum.exp), disp) + '</div></div>';
@@ -783,11 +864,47 @@
     return h + '<div class="col" style="gap:8px">' + S.budgets.map(budgetRow).join('') + '</div>';
   }
   function budgetRow(b) {
-    var c = catById(b.categoryId), spent = budgetSpent(b), pct = Math.min(100, Math.round(spent / b.limitMinor * 100)), raw = spent / b.limitMinor;
+    var c = catById(b.categoryId), pace = budgetPace(b), spent = pace.spent, pct = Math.min(100, Math.round(pace.pct * 100)), raw = pace.pct;
     var cls = raw >= 1 ? 'over' : raw >= 0.8 ? 'warnb' : '';
     return '<button class="card cardbtn" data-a="edit-bud" data-id="' + esc(b.id) + '"><div class="row"><span>' + (c ? esc(c.icon) + ' ' + esc(c.name) : 'Categoría') + '</span><span class="num">' + fmt(spent, b.currency) + ' / ' + fmt(b.limitMinor, b.currency) + '</span></div>' +
       '<div class="bar ' + cls + '"><i style="width:' + Math.max(raw > 0 ? 3 : 0, pct) + '%"></i></div><div class="muted">' +
-      (raw >= 1 ? 'Te pasaste por ' + fmt(spent - b.limitMinor, b.currency) : 'Te quedan ' + fmt(b.limitMinor - spent, b.currency)) + '</div></button>';
+      (raw >= 1 ? 'Te pasaste por ' + fmt(spent - b.limitMinor, b.currency) : 'Te quedan ' + fmt(b.limitMinor - spent, b.currency)) + '</div>' +
+      '<div class="muted">Proyección al cierre: ' + fmt(pace.projected, b.currency) + (pace.ahead ? ' · Vas más rápido que tu presupuesto' : pace.projected > b.limitMinor ? ' · Podrías superar el límite' : ' · Ritmo actual dentro del límite') + '</div></button>';
+  }
+  function base64UrlToUint8Array(base64String) {
+    var padding = '='.repeat((4 - base64String.length % 4) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var raw = window.atob(base64), out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  async function togglePushSubscription() {
+    if (!CLOUD || !user || !sb) { toast('Los avisos push con la app cerrada requieren iniciar sesión en Supabase.'); return; }
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) { toast('Este navegador no admite avisos push. Puedes seguir usando los avisos dentro de Cuadre.'); return; }
+    if (!CONFIG.VAPID_PUBLIC_KEY || CONFIG.VAPID_PUBLIC_KEY.length < 40) { toast('Configura VAPID_PUBLIC_KEY en app.js con la clave pública de Web Push. Nunca pongas la clave privada en la app.'); return; }
+    try {
+      var permission = Notification.permission;
+      if (permission !== 'granted') permission = await Notification.requestPermission();
+      if (permission !== 'granted') { toast('No se concedió permiso para notificaciones.'); return; }
+      var reg = await navigator.serviceWorker.ready;
+      var existing = await reg.pushManager.getSubscription();
+      if (existing) {
+        var endpoint = existing.endpoint;
+        var removed = await act(async function () { await B.removePushSubscription(endpoint); await existing.unsubscribe(); });
+        if (!removed) return;
+        try { localStorage.setItem('cuadre:push:enabled', '0'); } catch (e0) {}
+        toast('Avisos push desactivados en este dispositivo.'); render(); return;
+      }
+      var subscription = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToUint8Array(CONFIG.VAPID_PUBLIC_KEY) });
+      var json = subscription.toJSON(), keys = json.keys || {};
+      if (!json.endpoint || !keys.p256dh || !keys.auth) { await subscription.unsubscribe(); throw new Error('El navegador devolvió una suscripción incompleta.'); }
+      var saved = await act(async function () { await B.savePushSubscription({ endpoint: json.endpoint, p256dh: keys.p256dh, auth: keys.auth, expirationTime: json.expirationTime }); });
+      if (!saved) { await subscription.unsubscribe(); return; }
+      try { localStorage.setItem('cuadre:push:enabled', '1'); } catch (e1) {}
+      toast('Avisos push activados en este dispositivo. Para que lleguen pagos programados, despliega el emisor y programa su ejecución en Supabase.'); render();
+    } catch (e) {
+      toast(/relation|schema cache|does not exist/i.test((e && e.message) || '') ? 'Falta ejecutar el schema.sql de esta versión para registrar suscripciones push.' : 'No se pudieron configurar los avisos push: ' + ((e && e.message) || 'revisa el navegador y las claves VAPID.'));
+    }
   }
   function viewRemind() {
     var back = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button>';
@@ -801,7 +918,12 @@
       (perm === 'unsupported' ? '<div class="muted">Este navegador no permite notificaciones. Igual verás los avisos dentro de la app.</div>'
         : '<div class="muted">' + (on ? 'Activados: te notificamos al abrir la app cuando algo vence pronto o ya venció.' : perm === 'denied' ? 'Las notificaciones están bloqueadas en este navegador. Actívalas en los ajustes del sitio.' : 'Activa las notificaciones para recibir el aviso al abrir la app.') + '</div>' +
           (perm === 'denied' ? '' : '<button class="btn quiet" data-a="notify-toggle">' + (on ? 'Desactivar avisos del teléfono' : 'Activar avisos del teléfono') + '</button>')) +
-      '<div class="muted">Importante: por ahora los avisos salen cuando abres la app. Para que lleguen con la app cerrada hace falta un servidor de notificaciones, que todavía no está incluido. Dentro de la app, lo que vence siempre aparece en Inicio y en Pagos.</div></div>';
+      '<div class="muted">Estos avisos locales se revisan al abrir Cuadre. Los avisos push funcionan por separado.</div></div>' +
+      '<div class="card"><div class="label">Avisos con la app cerrada</div><div class="muted">Para que el teléfono reciba recordatorios aunque Cuadre esté cerrada, activa una suscripción Web Push y configura el emisor programado de Supabase que viene en este ZIP.</div>' +
+      (!CLOUD || !user ? '<div class="banner">Primero configura Supabase e inicia sesión. La suscripción se guarda de forma privada para esta cuenta.</div>' :
+        (!CONFIG.VAPID_PUBLIC_KEY ? '<div class="banner">Falta configurar VAPID_PUBLIC_KEY en app.js. La clave privada se guarda solo como secreto de servidor.</div>' : '') +
+        '<button class="btn quiet" data-a="toggle-push">Activar / desactivar avisos push en este dispositivo</button>') +
+      '<div class="muted">Activar el botón no programa el servidor automáticamente. Sigue LEEME.md para configurar VAPID, desplegar send-reminders y programarlo con Supabase Cron.</div></div>';
   }
 
   /* Dividir un gasto con otras personas (dentro de la hoja de registro). */
@@ -835,6 +957,14 @@
   }
   /* ---------- Nuevas funciones Cuadre v0.4: informes y finanzas prácticas ---------- */
   var quickParsed = null;
+  var assistantQuestion = '', assistantAnswer = '', assistantDraft = null, assistantBusy = false;
+  var csvImportDraft = null, activeFamilyId = '', familyInviteCode = '', familyError = '', restoreDraftText = '';
+  function selectedFamilyId() {
+    if (activeFamilyId && (S.familySpaces || []).some(function (x) { return x.id === activeFamilyId; })) return activeFamilyId;
+    try { activeFamilyId = localStorage.getItem('cuadre:family:selected:' + (user ? user.id : 'local')) || ''; } catch (e) { activeFamilyId = ''; }
+    if (!(S.familySpaces || []).some(function (x) { return x.id === activeFamilyId; })) activeFamilyId = (S.familySpaces || [])[0] ? S.familySpaces[0].id : '';
+    return activeFamilyId;
+  }
   function normWords(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9$.,@ -]/g, ' ').replace(/\s+/g, ' ').trim(); }
   function reportPeriod() {
     var fromEl = document.getElementById('report-from'), toEl = document.getElementById('report-to');
@@ -931,13 +1061,20 @@
     note = note ? note.charAt(0).toLocaleUpperCase('es-VE') + note.slice(1) : category.name;
     return { raw: text, amountMinor: amount, currency: currency, type: type, account: account, category: category, note: note.slice(0, 120), rateE4: S.rate.rateE4, error: (!S.rate.rateE4 ? 'Primero define la tasa del dólar en Más › Tasas; la app guarda la tasa aplicada a cada movimiento.' : null) };
   }
+  async function saveParsedQuickEntry(parsed, context) {
+    if (!parsed || parsed.error) { toast(parsed && parsed.error ? parsed.error : 'Primero interpreta el movimiento.'); return false; }
+    if (offline) { toast('Sin conexión: por ahora solo puedes mirar tus datos.'); return false; }
+    var now = new Date().toISOString(), tx = { id: uuid(), type: parsed.type, amountMinor: parsed.amountMinor, currency: parsed.currency, rateE4: parsed.rateE4 || S.rate.rateE4, categoryId: parsed.category.id, accountId: parsed.account.id, note: parsed.note, dateISO: today(), createdAt: now, updatedAt: now, split: null, receiptImage: '' };
+    if (!(tx.rateE4 > 0)) { toast('Define la tasa del dólar antes de guardar.'); return false; }
+    var ok = await act(async function () { await B.saveTx(tx); S.transactions.push(tx); persist(); });
+    if (ok) { quickParsed = null; assistantDraft = null; toast('Movimiento guardado'); if (context === 'assistant') { assistantAnswer = 'Listo: el movimiento se guardó. ¿Qué más quieres revisar?'; } else { tab = 'moves'; sub = 'menu'; } render(); }
+    return ok;
+  }
   async function saveQuickEntry() {
     var raw = document.getElementById('quick-text') ? document.getElementById('quick-text').value : quickParsed && quickParsed.raw;
     var parsed = parseQuickEntry(raw); quickParsed = parsed;
     if (parsed.error) { render(); return; }
-    var now = new Date().toISOString(), tx = { id: uuid(), type: parsed.type, amountMinor: parsed.amountMinor, currency: parsed.currency, rateE4: parsed.rateE4 || S.rate.rateE4, categoryId: parsed.category.id, accountId: parsed.account.id, note: parsed.note, dateISO: today(), createdAt: now, updatedAt: now, split: null, receiptImage: '' };
-    var ok = await act(async function () { await B.saveTx(tx); S.transactions.push(tx); persist(); });
-    if (ok) { quickParsed = null; toast('Movimiento guardado'); tab = 'moves'; sub = 'menu'; render(); }
+    await saveParsedQuickEntry(parsed, 'quick');
   }
   function viewTransfers() {
     var accounts = S.accounts, opts = accounts.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + ' (' + (a.currency === 'USD' ? '$' : 'Bs') + ')</option>'; }).join('');
@@ -965,8 +1102,10 @@
   function viewGoals() {
     var h = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Metas de ahorro</h1>' + banners() + '<div class="card"><div class="label">Nueva meta</div><div class="field"><label class="label" for="goal-name">Nombre</label><input id="goal-name" maxlength="60" placeholder="Ej. Equipo de trabajo"></div><div class="field"><label class="label" for="goal-target">Monto objetivo</label><input id="goal-target" inputmode="decimal" placeholder="200,00"></div><div class="field"><label class="label" for="goal-saved">Ya ahorrado</label><input id="goal-saved" inputmode="decimal" value="0"></div><div class="field"><label class="label" for="goal-currency">Moneda</label><select id="goal-currency"><option value="USD">Dólares</option><option value="VES">Bolívares</option></select></div><div class="field"><label class="label" for="goal-due">Fecha objetivo (opcional)</label><input id="goal-due" type="date"></div><div class="field"><label class="label" for="goal-note">Nota (opcional)</label><input id="goal-note" maxlength="120"></div><button class="btn" data-a="save-goal">Crear meta</button></div>';
     if (!(S.goals || []).length) return h + '<div class="empty"><b>Empieza con una meta pequeña</b><span class="muted">El progreso se actualiza manualmente; no mueve dinero entre cuentas.</span></div>';
-    h += '<div class="label">Tus metas</div>' + S.goals.map(function (g) { var pct = g.targetMinor > 0 ? Math.min(100, Math.round(g.savedMinor / g.targetMinor * 100)) : 0; return '<div class="card"><div class="row"><b>' + esc(g.name) + '</b><button class="linkbtn" data-a="delete-goal" data-id="' + esc(g.id) + '">Eliminar</button></div><div class="row"><span class="num">' + fmt(g.savedMinor, g.currency) + ' / ' + fmt(g.targetMinor, g.currency) + '</span><b>' + pct + '%</b></div><div class="bar"><i style="width:' + pct + '%"></i></div>' + (g.dueDate ? '<div class="muted">Objetivo: ' + esc(g.dueDate) + '</div>' : '') + '<div class="field"><label class="label" for="goal-progress-' + esc(g.id) + '">Monto acumulado actual</label><input id="goal-progress-' + esc(g.id) + '" inputmode="decimal" value="' + esc(minorToText(g.savedMinor)) + '"></div><button class="btn quiet" data-a="goal-progress" data-id="' + esc(g.id) + '">Actualizar progreso</button></div>'; }).join('');
-    h += '<div class="muted">Las metas son un seguimiento, no una cuenta bancaria separada. Registra también los movimientos reales para que el saldo de tus cuentas siga correcto.</div>'; return h;
+    h += '<div class="label">Tus metas</div>' + S.goals.map(function (g) { var pct = g.targetMinor > 0 ? Math.min(100, Math.round(g.savedMinor / g.targetMinor * 100)) : 0; return '<div class="card"><div class="row"><b>' + esc(g.name) + '</b><button class="linkbtn" data-a="delete-goal" data-id="' + esc(g.id) + '">Eliminar</button></div><div class="row"><span class="num">' + fmt(g.savedMinor, g.currency) + ' / ' + fmt(g.targetMinor, g.currency) + '</span><b>' + pct + '%</b></div><div class="bar"><i style="width:' + pct + '%"></i></div>' + (g.dueDate ? '<div class="muted">Objetivo: ' + esc(g.dueDate) + '</div>' : '') + '<div class="field"><label class="label" for="goal-contrib-' + esc(g.id) + '">Nuevo aporte para esta meta</label><input id="goal-contrib-' + esc(g.id) + '" inputmode="decimal" placeholder="Monto a reservar"></div><button class="btn" data-a="goal-contribute" data-id="' + esc(g.id) + '">Registrar aporte</button>' +
+      '<div class="field"><label class="label" for="goal-progress-' + esc(g.id) + '">Corregir monto acumulado (opcional)</label><input id="goal-progress-' + esc(g.id) + '" inputmode="decimal" value="' + esc(minorToText(g.savedMinor)) + '"></div><button class="btn quiet" data-a="goal-progress" data-id="' + esc(g.id) + '">Corregir progreso</button>' +
+      ((S.goalContributions || []).filter(function (x) { return x.goalId === g.id; }).length ? '<div class="muted">Aportes registrados: ' + (S.goalContributions || []).filter(function (x) { return x.goalId === g.id; }).length + '</div>' : '') + '</div>'; }).join('');
+    h += '<div class="muted">Los aportes reservan dinero para la meta, no son un gasto ni un movimiento bancario. El monto reservado se resta del dinero estimado que puedes gastar.</div>'; return h;
   }
   async function saveGoalClick() {
     var name = document.getElementById('goal-name').value.trim(), target = parseAmount(document.getElementById('goal-target').value), saved = parseAmount(document.getElementById('goal-saved').value || '0'), due = document.getElementById('goal-due').value, note = document.getElementById('goal-note').value.trim();
@@ -975,6 +1114,15 @@
     if (due && !validDate(due)) { toast('Revisa la fecha objetivo.'); return; }
     var g = { id: uuid(), name: name.slice(0, 60), targetMinor: target, savedMinor: saved, currency: document.getElementById('goal-currency').value === 'VES' ? 'VES' : 'USD', dueDate: due, note: note.slice(0, 120), createdAt: new Date().toISOString() };
     var ok = await act(async function () { await B.saveGoal(g); S.goals.push(g); persist(); }); if (ok) { toast('Meta creada'); render(); }
+  }
+  async function addGoalContribution(id) {
+    var g = (S.goals || []).filter(function (x) { return x.id === id; })[0]; if (!g) return;
+    var inp = document.getElementById('goal-contrib-' + id), amount = inp ? parseAmount(inp.value) : null;
+    if (!(amount > 0) || amount > (g.targetMinor - g.savedMinor)) { toast('El aporte debe ser mayor que cero y no superar lo que falta para la meta.'); return; }
+    var now = new Date().toISOString(), c = { id: uuid(), goalId: g.id, amountMinor: amount, currency: g.currency, dateISO: today(), note: 'Aporte a ' + g.name, createdAt: now };
+    var updated = Object.assign({}, g, { savedMinor: g.savedMinor + amount });
+    var ok = await act(async function () { await B.saveGoalContribution(c); if (!CLOUD) await B.saveGoal(updated); S.goalContributions = (S.goalContributions || []).concat([c]); S.goals = S.goals.map(function (x) { return x.id === id ? updated : x; }); persist(); });
+    if (ok) { toast('Aporte reservado para la meta'); render(); }
   }
   async function updateGoalProgress(id) {
     var g = (S.goals || []).filter(function (x) { return x.id === id; })[0]; if (!g) return;
@@ -993,6 +1141,180 @@
     var ok = await act(async function () { await B.saveAllocation(a); S.allocation = a; persist(); }); if (ok) { toast('Distribución guardada'); render(); }
   }
 
+  function assistantSnapshot() {
+    var m = monthSummary(today().slice(0, 7), S.displayCurrency), p = availablePlan(S.displayCurrency), fc = monthForecast(S.displayCurrency);
+    var budgets = (S.budgets || []).map(function (b) { var c = catById(b.categoryId), pace = budgetPace(b); return { category: c ? c.name : 'Categoría', spent: fmt(pace.spent, b.currency), limit: fmt(b.limitMinor, b.currency), projection: fmt(pace.projected, b.currency), currency: b.currency }; });
+    var goals = (S.goals || []).map(function (g) { return { name: g.name, percent: Math.round(100 * g.savedMinor / Math.max(1, g.targetMinor)), remaining: fmt(Math.max(0, g.targetMinor - g.savedMinor), g.currency), currency: g.currency }; });
+    return { displayCurrency: S.displayCurrency, balance: fmt(p.balance, S.displayCurrency), availableToSpend: fmt(p.available, S.displayCurrency), upcomingObligations30Days: fmt(p.obligations30, S.displayCurrency), goalsReserved: fmt(p.goalsReserved, S.displayCurrency), monthIncome: fmt(m.inc, S.displayCurrency), monthExpenses: fmt(m.exp, S.displayCurrency), projectedMonthEndBalance: fmt(fc.projectedBalance, S.displayCurrency), budgets: budgets, goals: goals };
+  }
+  function localAssistantAnswer(question) {
+    var q = normWords(question), disp = S.displayCurrency, month = today().slice(0, 7), sm = monthSummary(month, disp), plan = availablePlan(disp), forecast = monthForecast(disp);
+    if (/\b(saldo|disponible|puedo gastar|dinero tengo|dinero hay)\b/.test(q)) return 'Tu saldo total es ' + fmt(plan.balance, disp) + '. Después de reservar ' + fmt(plan.goalsReserved, disp) + ' para metas y ' + fmt(plan.obligations30, disp) + ' para obligaciones de los próximos 30 días, tu disponible estimado para gastar es ' + fmt(plan.available, disp) + '.';
+    if (/\b(proyeccion|proyectar|fin de mes|terminar el mes|cerrar el mes)\b/.test(q)) return 'Con el promedio neto de ' + fmt(forecast.dailyNet, disp) + ' por día observado durante ' + forecast.sampleDays + ' día(s), tu saldo estimado al cierre del mes sería ' + fmt(forecast.projectedBalance, disp) + '. Es una proyección simple, no una garantía.';
+    if (/\b(presupuesto|presupuestos|limite|limites)\b/.test(q)) {
+      if (!S.budgets.length) return 'Aún no tienes presupuestos configurados. En Más → Presupuestos puedes fijar un límite para cada categoría.';
+      return 'Resumen de tus presupuestos: ' + S.budgets.map(function (b) { var c = catById(b.categoryId), p = budgetPace(b); return (c ? c.name : 'Categoría') + ': ' + fmt(p.spent, b.currency) + ' de ' + fmt(b.limitMinor, b.currency) + ', proyección ' + fmt(p.projected, b.currency) + (p.ahead ? ' (ritmo alto)' : ''); }).join('; ') + '.';
+    }
+    if (/\b(meta|metas|ahorro|ahorrar)\b/.test(q)) {
+      if (!(S.goals || []).length) return 'Todavía no tienes metas. Crea una en Más → Metas de ahorro; los aportes reservan dinero sin registrarse como gasto.';
+      return 'Tus metas: ' + S.goals.map(function (g) { return g.name + ' (' + Math.round(g.savedMinor / Math.max(1, g.targetMinor) * 100) + '%; faltan ' + fmt(Math.max(0, g.targetMinor - g.savedMinor), g.currency) + ')'; }).join('; ') + '.';
+    }
+    if (/\b(tasa|dolar|bolivar|cambio|cambiaria)\b/.test(q)) {
+      var hist = (S.rateHistory || []).filter(function (x) { return x.rateE4 > 0; }).sort(function (a, b) { return a.recordedAt.localeCompare(b.recordedAt); });
+      if (!S.rate.rateE4) return 'Todavía no hay una tasa del dólar guardada. Abre Más → Tasas para consultarla o registrar una manualmente.';
+      if (hist.length > 1) return 'La tasa actual guardada es Bs ' + fmtRate(S.rate.rateE4) + ' por dólar. El historial contiene ' + hist.length + ' registros. En Reportes puedes consultar el efecto referencial sobre tu saldo en bolívares.';
+      return 'La tasa guardada es Bs ' + fmtRate(S.rate.rateE4) + ' por dólar. Cuadre guarda las tasas históricas que registre a partir de esta versión; aún hay pocos datos para comparar.';
+    }
+    var named = S.categories.filter(function (c) { return c.kind === 'expense' && normWords(c.name) && q.indexOf(normWords(c.name)) >= 0; })[0];
+    if (named || /\b(gasto|gastos|gaste|gastado|compras|comida|ingreso|ingresos)\b/.test(q)) {
+      var type = /\b(ingreso|ingresos|gane|ganado|cobre)\b/.test(q) ? 'income' : 'expense';
+      var rows = S.transactions.filter(function (t) { return t.dateISO.slice(0, 7) === month && t.type === type && (!named || t.categoryId === named.id); });
+      var sum = rows.reduce(function (n, t) { return n + convert(type === 'income' ? t.amountMinor : myMinor(t), t.currency, disp, t.rateE4); }, 0);
+      return (type === 'income' ? 'Tus ingresos' : 'Tus gastos') + (named ? ' en ' + named.name : '') + ' durante ' + monthLabel(month) + ': ' + fmt(sum, disp) + ' en ' + rows.length + ' movimiento(s).';
+    }
+    return 'Puedo ayudarte con tu saldo disponible, la proyección de fin de mes, gastos por categoría, presupuestos, metas de ahorro y tasas. También puedes escribir un movimiento como “almuerzo 5$ efectivo”; revisa siempre la interpretación antes de guardarla.';
+  }
+  async function askAssistant() {
+    var qel = document.getElementById('assistant-query'); assistantQuestion = qel ? qel.value.trim() : assistantQuestion;
+    if (!assistantQuestion) { assistantAnswer = 'Escribe una pregunta o un movimiento para empezar.'; render(); return; }
+    var q = assistantQuestion, normalized = normWords(q);
+    var isEntry = /\d/.test(q) && !/\b(cuanto|total|saldo|compar|presupuesto|ahorro|meta|proyeccion|proyectar|tasa|gastado|gaste este mes|cuanto gaste)\b/.test(normalized);
+    if (isEntry) {
+      assistantDraft = parseQuickEntry(q); quickParsed = assistantDraft;
+      assistantAnswer = assistantDraft.error && !assistantDraft.amountMinor ? assistantDraft.error : 'He preparado una propuesta. Revisa la cuenta, categoría, moneda y monto antes de guardarla.';
+      render(); return;
+    }
+    assistantBusy = true; assistantAnswer = ''; render();
+    try {
+      if (CLOUD && user && sb && sb.functions && sb.functions.invoke) {
+        var result = await sb.functions.invoke('financial-assistant', { body: { question: q, snapshot: assistantSnapshot() } });
+        if (!result.error && result.data && typeof result.data.answer === 'string' && result.data.answer.trim()) assistantAnswer = result.data.answer.trim();
+        else assistantAnswer = localAssistantAnswer(q);
+      } else assistantAnswer = localAssistantAnswer(q);
+    } catch (e) { assistantAnswer = localAssistantAnswer(q); }
+    assistantBusy = false; render();
+  }
+  function viewAssistant() {
+    var preview = '';
+    if (assistantDraft && assistantDraft.amountMinor && assistantDraft.account && assistantDraft.category) {
+      preview = '<div class="card"><div class="label">Propuesta de movimiento · revisar</div><b>' + esc(assistantDraft.type === 'income' ? 'Ingreso' : 'Gasto') + ' · ' + esc(assistantDraft.category.name) + '</b><div class="num">' + esc(fmt(assistantDraft.amountMinor, assistantDraft.currency)) + '</div><div class="muted">' + esc(assistantDraft.account.name) + ' · ' + esc(assistantDraft.note || 'Sin nota') + '</div>' + (assistantDraft.error ? '<div class="err">' + esc(assistantDraft.error) + '</div>' : '') + '<button class="btn" data-a="assistant-save"' + (assistantDraft.error ? ' disabled' : '') + '>Confirmar y guardar</button><button class="btn quiet" data-a="assistant-cancel">Cancelar propuesta</button></div>';
+    }
+    return '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Asistente financiero</h1><div class="card"><div class="label">Pregunta con tus palabras</div><div class="muted">Ejemplos: “¿cuánto puedo gastar?”, “¿cómo voy en comida?”, “proyección de fin de mes” o “almuerzo 5$ efectivo”. Las respuestas locales se calculan con tus datos; con Supabase puedes desplegar una función de IA opcional. Los movimientos siempre necesitan tu confirmación.</div><div class="field"><label class="label" for="assistant-query">Tu pregunta</label><input id="assistant-query" maxlength="500" value="' + esc(assistantQuestion) + '" placeholder="¿Cuánto gasté este mes?"></div><button class="btn" data-a="assistant-ask"' + (assistantBusy ? ' disabled' : '') + '>' + (assistantBusy ? 'Consultando…' : 'Preguntar') + '</button>' + (assistantAnswer ? '<div class="card"><div class="label">Respuesta</div><div>' + esc(assistantAnswer) + '</div></div>' : '') + preview + '</div>' +
+      '<div class="card"><div class="label">Tu resumen actual</div><div class="row"><span class="muted">Disponible estimado</span><b>' + fmt(availablePlan(S.displayCurrency).available, S.displayCurrency) + '</b></div><div class="row"><span class="muted">Gastos este mes</span><b>' + fmt(monthSummary(today().slice(0, 7), S.displayCurrency).exp, S.displayCurrency) + '</b></div><div class="row"><span class="muted">Saldo estimado a fin de mes</span><b>' + fmt(monthForecast(S.displayCurrency).projectedBalance, S.displayCurrency) + '</b></div></div>';
+  }
+  function viewFamily() {
+    var h = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Espacio compartido</h1>';
+    if (!CLOUD || !user) return h + '<div class="banner">Los espacios compartidos necesitan una sesión de Supabase. Configura el modo nube e inicia sesión para invitar a otra persona.</div>';
+    if (S.familyMissing) return h + '<div class="banner bad">Falta actualizar la base de datos. Ejecuta el schema.sql de esta versión en Supabase para habilitar los espacios familiares.</div>';
+    h += '<div class="card"><div class="label">Crear espacio</div><div class="muted">Crea un libro compartido separado de tus finanzas personales. Sus gastos se ven por los miembros, pero no modifican automáticamente tus saldos personales.</div><div class="field"><label class="label" for="family-name">Nombre del hogar o grupo</label><input id="family-name" maxlength="60" placeholder="Ej. Casa" value=""></div><button class="btn" data-a="family-create">Crear espacio e invitación</button>' + (familyInviteCode ? '<div class="banner">Código de invitación (compártelo solo con quien corresponda): <b>' + esc(familyInviteCode) + '</b> <button class="linkbtn plain" data-a="family-copy-code">Copiar código</button></div>' : '') + '</div>' +
+      '<div class="card"><div class="label">Unirte a un espacio</div><div class="field"><label class="label" for="family-code">Código de invitación</label><input id="family-code" maxlength="24" autocapitalize="characters" placeholder="Pega el código que recibiste"></div><button class="btn quiet" data-a="family-join">Unirme</button>' + (familyError ? '<div class="err">' + esc(familyError) + '</div>' : '') + '</div>';
+    if (!(S.familySpaces || []).length) return h + '<div class="empty"><div class="big">👥</div><b>Aún no perteneces a un espacio</b><span class="muted">Crea uno o únete con un código.</span></div>';
+    var active = selectedFamilyId(), spaces = S.familySpaces || [];
+    h += '<div class="card"><div class="label">Tus espacios</div><div class="chips">' + spaces.map(function (sp) { return '<button class="chip" data-a="family-select" data-v="' + esc(sp.id) + '" aria-pressed="' + (sp.id === active) + '">' + esc(sp.name) + (sp.role === 'owner' ? ' · Admin' : '') + '</button>'; }).join('') + '</div></div>';
+    var activeSpace = spaces.filter(function (x) { return x.id === active; })[0];
+    if (!activeSpace) return h;
+    h += '<div class="card"><div class="label">Registrar gasto compartido · ' + esc(activeSpace.name) + '</div><div class="field"><label class="label" for="family-expense-title">Concepto</label><input id="family-expense-title" maxlength="80" placeholder="Ej. Compra del supermercado"></div><div class="grid2"><div class="field"><label class="label" for="family-expense-amount">Monto</label><input id="family-expense-amount" inputmode="decimal" placeholder="0,00"></div><div class="field"><label class="label" for="family-expense-currency">Moneda</label><select id="family-expense-currency"><option value="USD">Dólares</option><option value="VES">Bolívares</option></select></div></div><div class="field"><label class="label" for="family-expense-paid">Quién pagó</label><input id="family-expense-paid" maxlength="60" placeholder="Nombre de la persona"></div><div class="field"><label class="label" for="family-expense-category">Categoría</label><input id="family-expense-category" maxlength="40" placeholder="Ej. Comida"></div><div class="field"><label class="label" for="family-expense-date">Fecha</label><input id="family-expense-date" type="date" value="' + today() + '"></div><div class="field"><label class="label" for="family-expense-note">Nota opcional</label><input id="family-expense-note" maxlength="120"></div><button class="btn" data-a="family-save-expense" data-id="' + esc(activeSpace.id) + '">Guardar gasto compartido</button></div>';
+    var items = (S.familyExpenses || []).filter(function (x) { return x.spaceId === active; });
+    h += '<div class="label">Movimientos compartidos</div>' + (items.length ? items.map(function (x) { return '<div class="card"><div class="row"><b>' + esc(x.title) + '</b><b>' + fmt(x.amountMinor, x.currency) + '</b></div><div class="muted">' + esc(x.dateISO) + ' · Pagó: ' + esc(x.paidBy || 'Sin especificar') + (x.category ? ' · ' + esc(x.category) : '') + '</div>' + (x.note ? '<div class="muted">' + esc(x.note) + '</div>' : '') + ((x.createdBy === user.id || activeSpace.ownerId === user.id) ? '<button class="linkbtn" data-a="family-delete-expense" data-id="' + esc(x.id) + '">Eliminar</button>' : '') + '</div>'; }).join('') : '<div class="empty"><b>Aún no hay gastos compartidos</b></div>');
+    h += '<div class="muted">Cada espacio admite un máximo de 10 usos del código inicial. No introduzcas aquí información confidencial; estos movimientos son visibles para los miembros del espacio.</div>';
+    return h;
+  }
+  function csvSplit(line, delimiter) {
+    var out = [], cell = '', quoted = false;
+    for (var i = 0; i < line.length; i++) {
+      var ch = line[i];
+      if (ch === '"') { if (quoted && line[i + 1] === '"') { cell += '"'; i++; } else quoted = !quoted; }
+      else if (ch === delimiter && !quoted) { out.push(cell); cell = ''; }
+      else cell += ch;
+    }
+    out.push(cell); return out;
+  }
+  function parseCsvDate(value) {
+    var x = String(value || '').trim(), m;
+    if (validDate(x)) return x;
+    m = /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/.exec(x);
+    if (!m) return '';
+    var a = +m[1], b = +m[2], y = +m[3], d, mo;
+    // For slash dates exported from local banks, default to DD/MM/YYYY unless the first part cannot be a day.
+    if (a > 12) { d = a; mo = b; } else if (b > 12) { mo = a; d = b; } else { d = a; mo = b; }
+    var isoDate = y + '-' + p2(mo) + '-' + p2(d); return validDate(isoDate) ? isoDate : '';
+  }
+  function parseCsvImport(text) {
+    var lines = String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/).filter(function (l) { return l.trim() !== ''; });
+    if (lines.length < 2) return { rows: [], errors: ['El CSV debe tener una fila de encabezados y al menos una fila de datos.'] };
+    var first = lines[0], delimiters = [';', ',', '\t'], delim = delimiters.sort(function (a, b) { return csvSplit(first, b).length - csvSplit(first, a).length; })[0];
+    var heads = csvSplit(first, delim).map(function (x) { return normWords(x); });
+    function idx(names) { for (var i = 0; i < names.length; i++) { var n = normWords(names[i]), j = heads.indexOf(n); if (j >= 0) return j; } return -1; }
+    var ix = { date: idx(['fecha','date','transaction date','fecha de operacion','fecha operación']), type: idx(['tipo','type','movimiento','naturaleza']), amount: idx(['monto','amount','importe','valor','total']), currency: idx(['moneda','currency','divisa']), account: idx(['cuenta','account','cuenta origen']), category: idx(['categoria','category','rubro']), note: idx(['nota','note','descripcion','description','concepto','detalle']), paid: idx(['debito','debit','cargo']), received: idx(['credito','credit','abono']) };
+    if (ix.date < 0) return { rows: [], errors: ['El CSV necesita una columna Fecha/Date para no asignar fechas equivocadas.'] };
+    if (ix.amount < 0 && ix.paid < 0 && ix.received < 0) return { rows: [], errors: ['No encontré una columna Monto/Amount ni columnas Débito/Crédito.'] };
+    var rows = [], errors = [];
+    lines.slice(1).forEach(function (line, ri) {
+      var cells = csvSplit(line, delim).map(function (x) { return x.trim(); });
+      function get(k) { return ix[k] >= 0 ? (cells[ix[k]] || '') : ''; }
+      var rawAmount = get('amount'), typeText = normWords(get('type')), amountText = rawAmount, type = /ingreso|income|credito|credit|abono|deposit|deposito/.test(typeText) ? 'income' : 'expense';
+      if (!rawAmount && (get('paid') || get('received'))) { if (get('received')) { amountText = get('received'); type = 'income'; } else { amountText = get('paid'); type = 'expense'; } }
+      amountText = String(amountText).replace(/\$/g, '').replace(/\b(?:usd|ves|bs\.?|bolivares?|dolares?)\b/ig, '').trim();
+      var amount = parseAmount(amountText), currencyRaw = String(get('currency') || '') + ' ' + String(rawAmount || '') + ' ' + String(get('paid') || '') + ' ' + String(get('received') || ''), currencyWords = normWords(currencyRaw), currency = /usd|dolar|\$/.test(currencyRaw.toLowerCase()) || /usd|dolar/.test(currencyWords) ? 'USD' : /ves|bolivar|\bbs\b/.test(currencyWords) ? 'VES' : S.displayCurrency;
+      var date = parseCsvDate(get('date')), accountName = get('account').toLowerCase(), catName = normWords(get('category'));
+      var account = accountName ? S.accounts.filter(function (a) { return a.name.toLowerCase() === accountName && a.currency === currency; })[0] : null;
+      if (!account) account = S.accounts.filter(function (a) { return a.id === defaultAccount(currency); })[0];
+      var category = catName ? S.categories.filter(function (c) { return normWords(c.name) === catName && c.kind === type; })[0] : null;
+      if (!category) category = S.categories.filter(function (c) { return c.kind === type; }).sort(function (a,b) { return a.sortOrder-b.sortOrder; })[0];
+      if (!(amount > 0)) errors.push('Fila ' + (ri + 2) + ': monto inválido');
+      else if (!account) errors.push('Fila ' + (ri + 2) + ': no hay cuenta para ' + currency);
+      else if (!category) errors.push('Fila ' + (ri + 2) + ': no hay categoría de ' + type);
+      else if (!date || !validDate(date)) errors.push('Fila ' + (ri + 2) + ': fecha inválida');
+      else if (!(S.rate.rateE4 > 0)) errors.push('Fila ' + (ri + 2) + ': define la tasa antes de importar movimientos');
+      else rows.push({ type: type, amountMinor: amount, currency: currency, rateE4: S.rate.rateE4, categoryId: category.id, accountId: account.id, note: String(get('note') || category.name).slice(0, 120), dateISO: date });
+    });
+    return { rows: rows, errors: errors };
+  }
+  async function confirmCsvImport() {
+    if (!csvImportDraft || !csvImportDraft.rows.length) { toast('No hay movimientos válidos para importar.'); return; }
+    if (offline) { toast('Sin conexión: por ahora solo puedes mirar tus datos.'); return; }
+    var now = new Date().toISOString(), list = csvImportDraft.rows.map(function (x) { return Object.assign({ id: uuid(), createdAt: now, updatedAt: now, split: null, receiptImage: '' }, x); });
+    var ok = await act(async function () { await B.addTxs(list); S.transactions = S.transactions.concat(list); persist(); });
+    if (ok) { toast('Importados ' + list.length + ' movimientos.'); csvImportDraft = null; msg = null; render(); }
+  }
+  async function createFamilySpace() {
+    if (!CLOUD || !user) { toast('Inicia sesión en Supabase para crear un espacio compartido.'); return; }
+    var name = document.getElementById('family-name') ? document.getElementById('family-name').value.trim() : '';
+    if (!name || name.length > 60) { toast('Escribe un nombre de entre 1 y 60 caracteres.'); return; }
+    try {
+      var r = check(await sb.rpc('create_family_space', { p_name: name })), payload = r.data || {};
+      familyInviteCode = payload.invite_code || payload.inviteCode || '';
+      await refreshFamilyData();
+      activeFamilyId = payload.space_id || payload.spaceId || selectedFamilyId();
+      try { localStorage.setItem('cuadre:family:selected:' + user.id, activeFamilyId); } catch (e) {}
+      familyError = ''; toast('Espacio compartido creado. Guarda el código de invitación.'); render();
+    } catch (e) { familyError = humanError(e); render(); }
+  }
+  async function joinFamilySpace() {
+    if (!CLOUD || !user) { toast('Inicia sesión en Supabase para unirte.'); return; }
+    var code = document.getElementById('family-code') ? document.getElementById('family-code').value.trim().toUpperCase() : '';
+    if (!code) { familyError = 'Escribe el código de invitación.'; render(); return; }
+    try {
+      var r = check(await sb.rpc('join_family_space', { p_invite_code: code }));
+      await refreshFamilyData(); activeFamilyId = r.data || selectedFamilyId();
+      try { localStorage.setItem('cuadre:family:selected:' + user.id, activeFamilyId); } catch (e) {}
+      familyError = ''; familyInviteCode = ''; toast('Te uniste al espacio compartido.'); render();
+    } catch (e) { familyError = humanError(e); render(); }
+  }
+  async function saveFamilyExpense(spaceId) {
+    if (!CLOUD || offline) { toast('Necesitas conexión para guardar gastos compartidos.'); return; }
+    var title = document.getElementById('family-expense-title').value.trim(), amount = parseAmount(document.getElementById('family-expense-amount').value), currency = document.getElementById('family-expense-currency').value === 'VES' ? 'VES' : 'USD', paidBy = document.getElementById('family-expense-paid').value.trim(), category = document.getElementById('family-expense-category').value.trim(), dateISO = document.getElementById('family-expense-date').value, note = document.getElementById('family-expense-note').value.trim();
+    if (!title || title.length > 80 || !(amount > 0) || amount > 1e13 || !validDate(dateISO)) { toast('Revisa concepto, monto y fecha del gasto compartido.'); return; }
+    var e = { id: uuid(), spaceId: spaceId, title: title, amountMinor: amount, currency: currency, paidBy: paidBy.slice(0,60), category: category.slice(0,40), dateISO: dateISO, note: note.slice(0,120), createdAt: new Date().toISOString(), createdBy: user.id };
+    var ok = await act(async function () { await B.saveFamilyExpense(e); S.familyExpenses = [e].concat(S.familyExpenses || []); persist(); }); if (ok) { toast('Gasto compartido guardado'); render(); }
+  }
+  async function deleteFamilyExpense(id) {
+    var item = (S.familyExpenses || []).filter(function (x) { return x.id === id; })[0]; if (!item) return;
+    var space = (S.familySpaces || []).filter(function (x) { return x.id === item.spaceId; })[0];
+    if (item.createdBy !== user.id && (!space || space.ownerId !== user.id)) { toast('Solo quien creó el movimiento o el administrador puede eliminarlo.'); return; }
+    var ok = await act(async function () { await B.removeFamilyExpense(id); S.familyExpenses = S.familyExpenses.filter(function (x) { return x.id !== id; }); persist(); }); if (ok) render();
+  }
+
   function viewMore() {
     if (sub === 'menu') {
       var r = S.rate.rateE4;
@@ -1005,6 +1327,8 @@
         ['transfers', '🔄', 'Transferencias', (S.transfers || []).length + ' transferencias entre cuentas'],
         ['goals', '🎯', 'Metas de ahorro', (S.goals || []).length + ' metas activas'],
         ['allocation', '🪙', 'Distribución del ingreso', 'Porcentajes para organizar tu dinero'],
+        ['assistant', '✨', 'Asistente financiero', 'Pregunta sobre tus datos o prepara movimientos'],
+        ['family', '👨‍👩‍👧', 'Espacio compartido', 'Cuentas compartidas para hogar o pareja'],
         ['rate', '💱', 'Tasas', r > 0 ? 'Dólar BCV: Bs ' + fmtRate(r) : 'Sin definir'],
         ['remind', '🔔', 'Avisos', S.prefs.remindDays + (S.prefs.remindDays === 1 ? ' día antes' : ' días antes')],
         ['theme', '🌗', 'Apariencia', { light: 'Claro', dark: 'Oscuro', system: 'Como el dispositivo' }[readTheme()]],
@@ -1019,7 +1343,7 @@
         return '<button class="link" data-a="sub" data-v="' + i[0] + '"><span class="e" aria-hidden="true">' + i[1] + '</span><span class="col"><b>' + i[2] + '</b><span class="muted">' + i[3] + '</span></span><span class="chev" aria-hidden="true">›</span></button>';
       }).join('');
       if (CLOUD && user) h += '<button class="btn quiet" data-a="logout">Cerrar sesión</button>';
-      return h + '<div class="muted">Cuadre v0.4 · ' + (CLOUD ? 'tus datos están en la nube.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
+      return h + '<div class="muted">Cuadre v0.5.1 · ' + (CLOUD ? 'tus datos están en la nube.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
     }
     var back = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button>';
     if (sub === 'budgets') return viewBudgets();
@@ -1030,6 +1354,8 @@
     if (sub === 'transfers') return viewTransfers();
     if (sub === 'goals') return viewGoals();
     if (sub === 'allocation') return viewAllocation();
+    if (sub === 'assistant') return viewAssistant();
+    if (sub === 'family') return viewFamily();
     if (sub === 'accounts') {
       var ha = back + '<h1 class="h2">Cuentas</h1>' + banners() + '<div class="muted">Toca una cuenta para cambiarle el nombre o ponerle un logo.</div>';
       S.accounts.forEach(function (a) {
@@ -1116,15 +1442,17 @@
         '<div class="muted">Cada movimiento guarda la tasa del día en que lo registras, así tu historial no cambia cuando sube el dólar.</div>' + refCards();
     }
     if (sub === 'backup') {
-      var hb = back + '<h1 class="h2">' + (CLOUD ? 'Exportar e importar' : 'Copia de seguridad') + '</h1>' + banners() +
-        '<div class="muted">' + (CLOUD ? 'Tus datos ya están guardados en la nube. Aun así, puedes copiar una versión en texto para tenerla a mano.' : 'Tus datos viven solo en este navegador. Copia este texto y guárdalo en un lugar seguro (por ejemplo, envíatelo por WhatsApp).') + '</div>' +
-        '<textarea class="box" id="bk" readonly aria-label="Copia de seguridad">' + esc(JSON.stringify(S, function (k, v) { return k === 'profile' ? undefined : v; })) + '</textarea>' +
-        '<button class="btn" data-a="copy-backup">Copiar copia de seguridad</button>' +
-        '<div class="card"><div class="label">' + (CLOUD ? 'Importar' : 'Restaurar') + '</div><div class="muted">' +
-        (CLOUD ? 'Pega aquí una copia de la versión de archivo único de Cuadre. Se suma a lo que ya tienes, sin borrar nada.' : 'Pega aquí una copia anterior. Reemplaza lo que tengas ahora.') + '</div>' +
-        '<textarea class="box" id="rs" aria-label="Pegar copia"></textarea>' +
+      var hb = back + '<h1 class="h2">' + (CLOUD ? 'Copias e importación' : 'Copia de seguridad') + '</h1>' + banners() +
+        '<div class="muted">Crea una copia JSON completa y guárdala fuera del dispositivo. No incluye información de sesión ni claves. Restaura con cuidado: en modo local reemplaza los datos actuales; en la nube intenta sumar los registros.</div>' +
+        '<textarea class="box" id="bk" readonly aria-label="Vista previa de copia JSON">' + esc(JSON.stringify(S, function (k, v) { return k === 'profile' ? undefined : v; })) + '</textarea>' +
+        '<button class="btn" data-a="download-backup">Descargar copia JSON</button><button class="btn quiet" data-a="copy-backup">Copiar copia JSON</button>' +
+        '<div class="card"><div class="label">Restaurar una copia JSON</div><label class="label" for="backupfile">Selecciona un archivo .json</label><input id="backupfile" class="file" type="file" accept="application/json,.json"><label class="btn quiet small" for="backupfile">Elegir archivo JSON</label>' +
+        '<div class="field"><label class="label" for="rs">O pega una copia JSON</label><textarea class="box" id="rs" aria-label="Pegar copia JSON">' + esc(restoreDraftText) + '</textarea></div>' +
         (msg ? '<div class="' + (msgOk ? 'muted' : 'err') + '" role="alert">' + esc(msg) + '</div>' : '') +
-        '<button class="btn quiet" data-a="restore"' + (busy ? ' disabled' : '') + '>' + (CLOUD ? 'Importar datos' : 'Restaurar datos') + '</button></div>';
+        '<button class="btn quiet" data-a="restore"' + (busy ? ' disabled' : '') + '>Restaurar / importar JSON</button></div>' +
+        '<div class="card"><div class="label">Importar movimientos CSV</div><div class="muted">Usa columnas como Fecha, Tipo, Monto, Moneda, Cuenta, Categoría y Nota. Se mostrará una vista previa antes de añadir los movimientos. No se modifica ni borra lo existente.</div><label class="label" for="csvfile">Archivo CSV (exportado desde banco o Excel)</label><input id="csvfile" class="file" type="file" accept=".csv,text/csv"><label class="btn quiet small" for="csvfile">Elegir archivo CSV</label>' +
+        (csvImportDraft ? '<div class="muted">Filas válidas detectadas: ' + csvImportDraft.rows.length + ' · filas omitidas: ' + csvImportDraft.errors.length + '</div>' + (csvImportDraft.errors.length ? '<div class="err">' + esc(csvImportDraft.errors.slice(0, 5).join(' · ')) + '</div>' : '') + '<button class="btn" data-a="confirm-csv-import">Importar movimientos válidos</button>' : '') +
+        '</div>';
       return hb;
     }
     return '';
@@ -1516,6 +1844,19 @@
 
   async function handleExtra(a, el, id, v) {
     if (a === 'refresh-report') { render(); return true; }
+    if (a === 'download-backup') { var backup = JSON.stringify(S, function (k, value) { return k === 'profile' ? undefined : value; }, 2); downloadBlob(backup, 'application/json;charset=utf-8', 'Cuadre_copia_' + today() + '.json'); toast('Copia JSON descargada'); return true; }
+    if (a === 'confirm-csv-import') { await confirmCsvImport(); return true; }
+    if (a === 'toggle-push') { await togglePushSubscription(); return true; }
+    if (a === 'assistant-ask') { await askAssistant(); return true; }
+    if (a === 'assistant-save') { await saveParsedQuickEntry(assistantDraft || quickParsed, 'assistant'); return true; }
+    if (a === 'assistant-cancel') { assistantDraft = null; assistantAnswer = 'Propuesta cancelada; no se guardó ningún movimiento.'; render(); return true; }
+    if (a === 'family-create') { await createFamilySpace(); return true; }
+    if (a === 'family-join') { await joinFamilySpace(); return true; }
+    if (a === 'family-copy-code') { try { await navigator.clipboard.writeText(familyInviteCode); toast('Código copiado'); } catch (e) { toast('No se pudo copiar automáticamente; selecciona el código y cópialo.'); } return true; }
+    if (a === 'family-select') { activeFamilyId = v; try { localStorage.setItem('cuadre:family:selected:' + (user ? user.id : 'local'), activeFamilyId); } catch (e) {} render(); return true; }
+    if (a === 'family-save-expense') { await saveFamilyExpense(id); return true; }
+    if (a === 'family-delete-expense') { await deleteFamilyExpense(id); return true; }
+    if (a === 'goal-contribute') { await addGoalContribution(id); return true; }
     if (a === 'export-xlsx') { exportExcel(); return true; }
     if (a === 'export-pdf') { exportPdf(); return true; }
     if (a === 'quick-parse') { quickParsed = parseQuickEntry(document.getElementById('quick-text') ? document.getElementById('quick-text').value : ''); render(); return true; }
@@ -1671,14 +2012,65 @@
     });
     d.transactions.forEach(function (t) {
       var a = accMap[t.accountId], c = catMap[t.categoryId];
+      if (S.transactions.some(function (ex) { return ex.id === t.id; })) { skipped++; return; }
       if (!a || !c || a.currency !== t.currency || !Number.isSafeInteger(t.amountMinor) || t.amountMinor <= 0 || !Number.isSafeInteger(t.rateE4) || t.rateE4 <= 0 || !validDate(t.dateISO)) { skipped++; return; }
       rows.push({ id: uuid(), type: t.type === 'income' ? 'income' : 'expense', amountMinor: t.amountMinor, currency: t.currency, rateE4: t.rateE4, categoryId: c.id, accountId: a.id,
-        note: String(t.note || '').slice(0, 120), dateISO: t.dateISO, createdAt: t.createdAt || now, updatedAt: now });
+        note: String(t.note || '').slice(0, 120), dateISO: t.dateISO, createdAt: t.createdAt || now, updatedAt: now, split: Array.isArray(t.split) ? t.split : null, receiptImage: safeImg(t.receiptImage) });
     });
     await B.addAccounts(newAcc); await B.addCategories(newCat); await B.addTxs(rows);
     S.accounts = S.accounts.concat(newAcc); S.categories = S.categories.concat(newCat); S.transactions = S.transactions.concat(rows);
+    var transfersAdded = [], goalsAdded = [], budgetsAdded = 0, extrasSkipped = 0, goalIdMap = {};
+    (d.transfers || []).forEach(function (t) {
+      var from = accMap[t.fromAccountId], to = accMap[t.toAccountId];
+      if (!from || !to || from.id === to.id) { extrasSkipped++; return; }
+      var fa = Number(t.fromAmountMinor), ta = Number(t.toAmountMinor), rr = Number(t.rateE4) || S.rate.rateE4;
+      if (!(fa > 0 && ta > 0) || (from.currency === to.currency && fa !== ta) || (from.currency !== to.currency && !(rr > 0))) { extrasSkipped++; return; }
+      var nt = { id: uuid(), fromAccountId: from.id, toAccountId: to.id, fromAmountMinor: fa, toAmountMinor: ta, fromCurrency: from.currency, toCurrency: to.currency, rateE4: rr, dateISO: validDate(t.dateISO) ? t.dateISO : today(), note: String(t.note || '').slice(0,120), createdAt: t.createdAt || now };
+      transfersAdded.push(nt);
+    });
+    for (var ti = 0; ti < transfersAdded.length; ti++) await B.saveTransfer(transfersAdded[ti]);
+    S.transfers = (S.transfers || []).concat(transfersAdded);
+    (d.goals || []).forEach(function (g) {
+      var target = Number(g.targetMinor), saved = Number(g.savedMinor || 0);
+      if (!String(g.name || '').trim() || !Number.isSafeInteger(target) || target <= 0 || !Number.isSafeInteger(saved) || saved < 0 || saved > target || !['USD','VES'].includes(g.currency)) { extrasSkipped++; return; }
+      var ng = { id: uuid(), name: String(g.name).slice(0,60), targetMinor: target, savedMinor: saved, currency: g.currency, dueDate: validDate(g.dueDate) ? g.dueDate : '', note: String(g.note || '').slice(0,120), createdAt: g.createdAt || now };
+      goalIdMap[g.id] = ng.id; goalsAdded.push(ng);
+    });
+    for (var gi = 0; gi < goalsAdded.length; gi++) await B.saveGoal(goalsAdded[gi]);
+    S.goals = (S.goals || []).concat(goalsAdded);
+    for (var bi = 0; bi < (d.budgets || []).length; bi++) {
+      var b = d.budgets[bi], catb = catMap[b.categoryId], limitb = Number(b.limitMinor);
+      if (!catb || catb.kind !== 'expense' || !(limitb > 0) || !['USD','VES'].includes(b.currency) || S.budgets.some(function (x) { return x.categoryId === catb.id; })) { extrasSkipped++; continue; }
+      var nb = { id: uuid(), categoryId: catb.id, limitMinor: limitb, currency: b.currency, createdAt: now };
+      try { await B.upsertRow('budgets', { id: nb.id, user_id: user.id, category_id: nb.categoryId, limit_minor: nb.limitMinor, currency: nb.currency, created_at: nb.createdAt }); S.budgets.push(nb); budgetsAdded++; } catch (e) { extrasSkipped++; }
+    }
+    // Restore records of goal contributions without incrementing savedMinor a second time.
+    var contributionRows = [];
+    (d.goalContributions || []).forEach(function (c) { var gid = goalIdMap[c.goalId], goal = goalsAdded.filter(function (g) { return g.id === gid; })[0]; if (!gid || !goal || !(Number(c.amountMinor) > 0) || !validDate(c.dateISO)) return; contributionRows.push({ id: uuid(), goalId: gid, amountMinor: Number(c.amountMinor), currency: goal.currency, dateISO: c.dateISO, note: String(c.note || '').slice(0,120), createdAt: c.createdAt || now }); });
+    for (var ci = 0; ci < contributionRows.length; ci++) { try { await B.importGoalContributionRecord(contributionRows[ci]); } catch (e) { extrasSkipped++; continue; } }
+    S.goalContributions = (S.goalContributions || []).concat(contributionRows);
+    for (var si = 0; si < (d.scheduled || []).length; si++) {
+      var sx = d.scheduled[si], sac = accMap[sx.accountId], scat = catMap[sx.categoryId];
+      if (!sx.name || !(Number(sx.amountMinor) > 0) || !validDate(sx.nextDue) || !FREQ[sx.frequency] || !['USD','VES'].includes(sx.currency)) { extrasSkipped++; continue; }
+      var srow = { id: uuid(), user_id: user.id, name: String(sx.name).slice(0,40), amount_minor: Number(sx.amountMinor), currency: sx.currency, category_id: scat ? scat.id : null, account_id: sac ? sac.id : null, frequency: sx.frequency, next_due: sx.nextDue, anchor_day: Number(sx.anchorDay) || 1, remind_days: Number.isInteger(sx.remindDays) ? sx.remindDays : null, active: sx.active !== false, created_at: sx.createdAt || now };
+      try { await B.upsertRow('scheduled_payments', srow); S.scheduled.push({ id: srow.id, name: srow.name, amountMinor: srow.amount_minor, currency: srow.currency, categoryId: srow.category_id, accountId: srow.account_id, frequency: srow.frequency, nextDue: srow.next_due, anchorDay: srow.anchor_day, remindDays: srow.remind_days, active: srow.active, createdAt: srow.created_at }); } catch(e) { extrasSkipped++; }
+    }
+    for (var pi = 0; pi < (d.plans || []).length; pi++) {
+      var px = d.plans[pi], pac = accMap[px.accountId], pcat = catMap[px.categoryId];
+      if (!px.name || !(Number(px.totalMinor) > 0) || !validDate(px.firstDue) || !FREQ[px.frequency] || !(Number(px.count) >= 1) || Number(px.count) > 60 || Number(px.paidCount) > Number(px.count) || !['USD','VES'].includes(px.currency)) { extrasSkipped++; continue; }
+      var prow = { id: uuid(), user_id: user.id, name: String(px.name).slice(0,40), total_minor: Number(px.totalMinor), currency: px.currency, installments: Number(px.count), paid_count: Number(px.paidCount)||0, frequency: px.frequency, first_due: px.firstDue, anchor_day: Number(px.anchorDay)||1, category_id: pcat ? pcat.id : null, account_id: pac ? pac.id : null, remind_days: Number.isInteger(px.remindDays) ? px.remindDays : null, created_at: px.createdAt || now };
+      try { await B.upsertRow('installment_plans', prow); S.plans.push({ id: prow.id, name: prow.name, totalMinor: prow.total_minor, currency: prow.currency, count: prow.installments, paidCount: prow.paid_count, frequency: prow.frequency, firstDue: prow.first_due, anchorDay: prow.anchor_day, categoryId: prow.category_id, accountId: prow.account_id, remindDays: prow.remind_days, createdAt: prow.created_at }); } catch(e) { extrasSkipped++; }
+    }
+    for (var di = 0; di < (d.debts || []).length; di++) {
+      var dx = d.debts[di];
+      if (!dx.person || !(Number(dx.totalMinor) > 0) || !['owe','owed'].includes(dx.kind) || Number(dx.paidMinor || 0) > Number(dx.totalMinor) || !['USD','VES'].includes(dx.currency)) { extrasSkipped++; continue; }
+      var drow = { id: uuid(), user_id: user.id, kind: dx.kind, person: String(dx.person).slice(0,40), note: String(dx.note||'').slice(0,120), total_minor: Number(dx.totalMinor), paid_minor: Number(dx.paidMinor)||0, currency: dx.currency, due_date: validDate(dx.dueDate) ? dx.dueDate : null, remind_days: Number.isInteger(dx.remindDays) ? dx.remindDays : null, created_at: dx.createdAt || now };
+      try { await B.upsertRow('debts', drow); S.debts.push({ id: drow.id, kind: drow.kind, person: drow.person, note: drow.note, totalMinor: drow.total_minor, paidMinor: drow.paid_minor, currency: drow.currency, dueDate: drow.due_date, remindDays: drow.remind_days, createdAt: drow.created_at }); } catch(e) { extrasSkipped++; }
+    }
+    if (d.allocation) { var av = ['invest','enjoyment','savings','emergency','needs'].map(function (k) { return Number(d.allocation[k]); }); if (av.every(function (n) { return Number.isInteger(n) && n >= 0 && n <= 100; }) && av.reduce(function (n,x) { return n+x; },0) === 100) { try { await B.saveAllocation(d.allocation); S.allocation = d.allocation; } catch(e) {} } }
+    if (d.rateHistory && d.rateHistory.length) S.rateHistory = (S.rateHistory || []).concat(d.rateHistory.filter(function (x) { return x.rateE4 > 0; }));
     persist();
-    return 'Importado: ' + rows.length + ' movimientos, ' + newAcc.length + ' cuentas nuevas, ' + newCat.length + ' categorías nuevas' + (skipped ? ' (' + skipped + ' omitidos por datos inválidos).' : '.');
+    return 'Importado: ' + rows.length + ' movimientos, ' + transfersAdded.length + ' transferencias, ' + goalsAdded.length + ' metas, ' + budgetsAdded + ' presupuestos, ' + newAcc.length + ' cuentas nuevas y ' + newCat.length + ' categorías nuevas' + (skipped || extrasSkipped ? ' (' + (skipped + extrasSkipped) + ' registros omitidos o no importados).' : '.');
   }
 
   /* ---------- 14. Eventos ---------- */
@@ -1689,6 +2081,8 @@
     if (t.id === 'q') { query = t.value; var l = document.getElementById('list'); if (l) l.innerHTML = movesList(); return; }
     if (t.id === 'en' && editAcc) { editAcc.name = t.value; return; }
     if (t.id === 'pu' && profDraft) { profDraft.username = t.value; return; }
+    if (t.id === 'assistant-query') { assistantQuestion = t.value; return; }
+    if (t.id === 'rs') { restoreDraftText = t.value; return; }
     if (sheet && t.dataset && t.dataset.f) sheet[t.dataset.f] = t.value;
   });
   document.addEventListener('submit', function (ev) {
@@ -1788,11 +2182,11 @@
         render(); return;
       }
       if (a === 'restore') {
-        var text = document.getElementById('rs').value;
+        var text = document.getElementById('rs') ? document.getElementById('rs').value : restoreDraftText;
         busy = true; render();
         try {
           if (offline) throw new Error('Sin conexión');
-          msg = await importBackup(text); msgOk = true;
+          msg = await importBackup(text); msgOk = true; restoreDraftText = ''; 
         } catch (e) {
           msg = (e && e.message === 'formato') || e instanceof SyntaxError ? 'Ese texto no es una copia válida de Cuadre.' : humanError(e); msgOk = false;
         }
@@ -1804,7 +2198,13 @@
     var t = ev.target, f = t && t.files && t.files[0];
     if (!f) return;
     try {
-      if (t.id === 'logofile' && editAcc) {
+      if (t.id === 'backupfile') {
+        var backupText = await f.text(); restoreDraftText = backupText;
+        msg = 'Archivo cargado. Comprueba que sea una copia de Cuadre y pulsa Restaurar / importar JSON.'; msgOk = true; render();
+      } else if (t.id === 'csvfile') {
+        var csvText = await f.text(); csvImportDraft = parseCsvImport(csvText); msg = null; render();
+        if (!csvImportDraft.rows.length) toast('No se detectaron filas válidas; revisa el formato y la tasa.');
+      } else if (t.id === 'logofile' && editAcc) {
         editAcc.logo = safeImg(await imageToDataUrl(f, 96, 'image/png')); editAcc.msg = editAcc.logo ? null : 'No se pudo usar esa imagen.';
         if (editAcc.logo.length > 60000) { editAcc.logo = ''; editAcc.msg = 'Esa imagen es demasiado pesada. Prueba con una más simple.'; }
         render();
