@@ -15,8 +15,8 @@
      las reglas de schema.sql (cada persona solo ve sus propios datos).
      NUNCA pegues aquí la clave "service_role". */
   var CONFIG = {
-    SUPABASE_URL: 'https://qfkmtxekvywlcgfimwsg.supabase.co',        // Ejemplo: ''
-    SUPABASE_ANON_KEY: 'sb_publishable_JXA4mOZJH3eRJeKd8s6YZw_Y4shklIr'    // Ejemplo: 'eyJhbGciOi...'
+    SUPABASE_URL: 'https://qfkmtxekyylcgfiwmsg.supabase.co',
+    SUPABASE_ANON_KEY: 'sb_publishable_JXA4m0ZJHBeRJeKd8s6YZw_Y4shklIr',
     VAPID_PUBLIC_KEY: 'BMXienvznWzFHZ_6bto-Pw34SeP791P1eFOsRI3yK4ms6Fu7piR1OOnct0I471G-BRMo6U1d6pnamQZy-bQpHRQ'
   };
 
