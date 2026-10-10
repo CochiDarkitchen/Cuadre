@@ -10,7 +10,7 @@
    Lo que NUNCA guarda: las llamadas a Supabase, a la tasa del dólar ni los
    datos financieros. Esos siempre van directo a internet.
    ===================================================================== */
-const VERSION = 'cuadre-v7';
+const VERSION = 'cuadre-v9';
 const SHELL = [
   './',
   'index.html',
@@ -81,8 +81,8 @@ self.addEventListener('fetch', (event) => {
   // Todo lo demás (Supabase, tasa del dólar, fuentes): directo a internet, sin guardar.
 });
 
-// Puede mostrar avisos push enviados por un servidor configurado con VAPID.
-// Este listener no envía notificaciones por sí solo: hace falta configurar el servicio emisor.
+// Recibe avisos push enviados por el emisor seguro de Supabase configurado con VAPID.
+// La programación y el envío viven en supabase/functions/send-reminders, no en este archivo.
 self.addEventListener('push', (event) => {
   let payload = {};
   try { payload = event.data ? event.data.json() : {}; } catch (_) {
