@@ -10,7 +10,7 @@
    Lo que NUNCA guarda: las llamadas a Supabase, a la tasa del dólar ni los
    datos financieros. Esos siempre van directo a internet.
    ===================================================================== */
-const VERSION = 'cuadre-v6';
+const VERSION = 'cuadre-v7';
 const SHELL = [
   './',
   'index.html',
@@ -81,12 +81,32 @@ self.addEventListener('fetch', (event) => {
   // Todo lo demás (Supabase, tasa del dólar, fuentes): directo a internet, sin guardar.
 });
 
+// Puede mostrar avisos push enviados por un servidor configurado con VAPID.
+// Este listener no envía notificaciones por sí solo: hace falta configurar el servicio emisor.
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch (_) {
+    try { payload = { body: event.data ? event.data.text() : '' }; } catch (_) { payload = {}; }
+  }
+  const title = (payload && payload.title) || 'Cuadre';
+  const options = {
+    body: (payload && payload.body) || 'Tienes una novedad en tus finanzas.',
+    icon: 'icons/icon-192.png',
+    badge: 'icons/icon-192.png',
+    tag: (payload && payload.tag) || 'cuadre-push',
+    data: { url: (payload && payload.url) || './' }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
 // Al tocar un aviso, abre (o enfoca) la app.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) =>
-      list.length ? list[0].focus() : self.clients.openWindow('./')
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      const target = (event.notification.data && event.notification.data.url) || './';
+      return list.length ? list[0].focus().then(() => { try { list[0].navigate(target); } catch (_) {} }) : self.clients.openWindow(target);
+    }
     )
   );
 });
