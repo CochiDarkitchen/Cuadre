@@ -18,7 +18,7 @@
     SUPABASE_URL: 'https://qfkmtxekvywlcgfimwsg.supabase.co',
     SUPABASE_ANON_KEY: 'sb_publishable_JXA4mOZJH3eRJeKd8s6YZw_Y4shklIr',
     VAPID_PUBLIC_KEY: 'BMXienvznWzFHZ_6bto-Pw34SeP791P1eFOsRI3yK4ms6Fu7piR1OOnct0I471G-BRMo6U1d6pnamQZy-bQpHRQ'
-  };
+ };
 
   // Limpia lo pegado: agrega https:// si falta y quita barras o rutas de más (/rest/v1).
   (function () {
@@ -143,7 +143,15 @@
       metas[1].setAttribute('content', t === 'light' ? '#F2F5F3' : '#0E1512');
     }
   }
-  function setTheme(t) { try { if (t === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch (e) { /* se aplica igual */ } applyTheme(t); }
+  function setTheme(t) {
+    try { if (t === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch (e) { /* se aplica igual */ }
+    var root = document.documentElement;
+    if (!window.matchMedia || !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      root.classList.add('theme-animating'); clearTimeout(themeResetTimer);
+      themeResetTimer = setTimeout(function () { root.classList.remove('theme-animating'); }, 320);
+    }
+    applyTheme(t);
+  }
   applyTheme(readTheme());
 
   /* Imágenes: se recortan a cuadrado y se reducen para que pesen muy poco (sin subir archivos grandes). */
@@ -616,7 +624,8 @@
   var tab = 'home', sub = 'menu', query = '', filter = 'all', sheet = null, msg = null, topMsg = null, rateErr = null;
   var busy = false, msgOk = false, newAccCur = 'VES', newCatKind = 'expense', authMode = 'login', authMsg = null, authBusy = false;
   var arm = null, editAcc = null, profDraft = null, authDraft = { email: '', username: '' };
-  var $app = document.getElementById('app'), $nav = document.getElementById('nav'), $navwrap = document.getElementById('navwrap'), $sheet = document.getElementById('sheet');
+  var quickActionsOpen = false, lastMotionViewKey = null, motionResetTimer = null, themeResetTimer = null, heroAnimationFrame = null, motionRefreshRequested = false;
+  var $app = document.getElementById('app'), $nav = document.getElementById('nav'), $navwrap = document.getElementById('navwrap'), $sheet = document.getElementById('sheet'), $quickActions = document.getElementById('quick-actions');
 
   function rateChip() {
     var r = S.rate.rateE4;
@@ -1097,12 +1106,12 @@
     if (from.currency !== to.currency && !(S.rate.rateE4 > 0)) { toast('Define la tasa del dólar antes de registrar una transferencia entre monedas.'); return; }
     var t = { id: uuid(), fromAccountId: from.id, toAccountId: to.id, fromAmountMinor: fromAmount, toAmountMinor: toAmount, fromCurrency: from.currency, toCurrency: to.currency, rateE4: S.rate.rateE4, dateISO: date, note: note.slice(0, 120), createdAt: new Date().toISOString() };
     var ok = await act(async function () { await B.saveTransfer(t); S.transfers.push(t); persist(); });
-    if (ok) { toast('Transferencia guardada sin alterar los reportes de ingresos y gastos'); render(); }
+    if (ok) { motionRefreshRequested = true; toast('Transferencia guardada sin alterar los reportes de ingresos y gastos'); render(); }
   }
   function viewGoals() {
     var h = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Metas de ahorro</h1>' + banners() + '<div class="card"><div class="label">Nueva meta</div><div class="field"><label class="label" for="goal-name">Nombre</label><input id="goal-name" maxlength="60" placeholder="Ej. Equipo de trabajo"></div><div class="field"><label class="label" for="goal-target">Monto objetivo</label><input id="goal-target" inputmode="decimal" placeholder="200,00"></div><div class="field"><label class="label" for="goal-saved">Ya ahorrado</label><input id="goal-saved" inputmode="decimal" value="0"></div><div class="field"><label class="label" for="goal-currency">Moneda</label><select id="goal-currency"><option value="USD">Dólares</option><option value="VES">Bolívares</option></select></div><div class="field"><label class="label" for="goal-due">Fecha objetivo (opcional)</label><input id="goal-due" type="date"></div><div class="field"><label class="label" for="goal-note">Nota (opcional)</label><input id="goal-note" maxlength="120"></div><button class="btn" data-a="save-goal">Crear meta</button></div>';
     if (!(S.goals || []).length) return h + '<div class="empty"><b>Empieza con una meta pequeña</b><span class="muted">El progreso se actualiza manualmente; no mueve dinero entre cuentas.</span></div>';
-    h += '<div class="label">Tus metas</div>' + S.goals.map(function (g) { var pct = g.targetMinor > 0 ? Math.min(100, Math.round(g.savedMinor / g.targetMinor * 100)) : 0; return '<div class="card"><div class="row"><b>' + esc(g.name) + '</b><button class="linkbtn" data-a="delete-goal" data-id="' + esc(g.id) + '">Eliminar</button></div><div class="row"><span class="num">' + fmt(g.savedMinor, g.currency) + ' / ' + fmt(g.targetMinor, g.currency) + '</span><b>' + pct + '%</b></div><div class="bar"><i style="width:' + pct + '%"></i></div>' + (g.dueDate ? '<div class="muted">Objetivo: ' + esc(g.dueDate) + '</div>' : '') + '<div class="field"><label class="label" for="goal-contrib-' + esc(g.id) + '">Nuevo aporte para esta meta</label><input id="goal-contrib-' + esc(g.id) + '" inputmode="decimal" placeholder="Monto a reservar"></div><button class="btn" data-a="goal-contribute" data-id="' + esc(g.id) + '">Registrar aporte</button>' +
+    h += '<div class="label">Tus metas</div>' + S.goals.map(function (g) { var pct = g.targetMinor > 0 ? Math.min(100, Math.round(g.savedMinor / g.targetMinor * 100)) : 0; return '<div class="card' + (pct >= 100 ? ' goal-complete' : '') + '"><div class="row"><b>' + esc(g.name) + '</b><button class="linkbtn" data-a="delete-goal" data-id="' + esc(g.id) + '">Eliminar</button></div><div class="row"><span class="num">' + fmt(g.savedMinor, g.currency) + ' / ' + fmt(g.targetMinor, g.currency) + '</span><b>' + pct + '%</b></div><div class="bar"><i style="width:' + pct + '%"></i></div>' + (g.dueDate ? '<div class="muted">Objetivo: ' + esc(g.dueDate) + '</div>' : '') + '<div class="field"><label class="label" for="goal-contrib-' + esc(g.id) + '">Nuevo aporte para esta meta</label><input id="goal-contrib-' + esc(g.id) + '" inputmode="decimal" placeholder="Monto a reservar"></div><button class="btn" data-a="goal-contribute" data-id="' + esc(g.id) + '">Registrar aporte</button>' +
       '<div class="field"><label class="label" for="goal-progress-' + esc(g.id) + '">Corregir monto acumulado (opcional)</label><input id="goal-progress-' + esc(g.id) + '" inputmode="decimal" value="' + esc(minorToText(g.savedMinor)) + '"></div><button class="btn quiet" data-a="goal-progress" data-id="' + esc(g.id) + '">Corregir progreso</button>' +
       ((S.goalContributions || []).filter(function (x) { return x.goalId === g.id; }).length ? '<div class="muted">Aportes registrados: ' + (S.goalContributions || []).filter(function (x) { return x.goalId === g.id; }).length + '</div>' : '') + '</div>'; }).join('');
     h += '<div class="muted">Los aportes reservan dinero para la meta, no son un gasto ni un movimiento bancario. El monto reservado se resta del dinero estimado que puedes gastar.</div>'; return h;
@@ -1113,7 +1122,7 @@
     if (!(target > 0) || target > 1e13 || saved === null || saved < 0 || saved > target) { toast('Revisa los montos de la meta; el objetivo debe ser válido y lo ahorrado debe estar entre cero y el objetivo.'); return; }
     if (due && !validDate(due)) { toast('Revisa la fecha objetivo.'); return; }
     var g = { id: uuid(), name: name.slice(0, 60), targetMinor: target, savedMinor: saved, currency: document.getElementById('goal-currency').value === 'VES' ? 'VES' : 'USD', dueDate: due, note: note.slice(0, 120), createdAt: new Date().toISOString() };
-    var ok = await act(async function () { await B.saveGoal(g); S.goals.push(g); persist(); }); if (ok) { toast('Meta creada'); render(); }
+    var ok = await act(async function () { await B.saveGoal(g); S.goals.push(g); persist(); }); if (ok) { motionRefreshRequested = true; toast('Meta creada'); render(); }
   }
   async function addGoalContribution(id) {
     var g = (S.goals || []).filter(function (x) { return x.id === id; })[0]; if (!g) return;
@@ -1122,13 +1131,13 @@
     var now = new Date().toISOString(), c = { id: uuid(), goalId: g.id, amountMinor: amount, currency: g.currency, dateISO: today(), note: 'Aporte a ' + g.name, createdAt: now };
     var updated = Object.assign({}, g, { savedMinor: g.savedMinor + amount });
     var ok = await act(async function () { await B.saveGoalContribution(c); if (!CLOUD) await B.saveGoal(updated); S.goalContributions = (S.goalContributions || []).concat([c]); S.goals = S.goals.map(function (x) { return x.id === id ? updated : x; }); persist(); });
-    if (ok) { toast('Aporte reservado para la meta'); render(); }
+    if (ok) { motionRefreshRequested = true; toast('Aporte reservado para la meta'); render(); }
   }
   async function updateGoalProgress(id) {
     var g = (S.goals || []).filter(function (x) { return x.id === id; })[0]; if (!g) return;
     var inp = document.getElementById('goal-progress-' + id), n = inp ? parseAmount(inp.value) : null;
     if (n === null || n < 0 || n > g.targetMinor) { toast('El progreso debe estar entre cero y el monto objetivo.'); return; }
-    var updated = Object.assign({}, g, { savedMinor: n }); var ok = await act(async function () { await B.saveGoal(updated); S.goals = S.goals.map(function (x) { return x.id === id ? updated : x; }); persist(); }); if (ok) { toast('Progreso actualizado'); render(); }
+    var updated = Object.assign({}, g, { savedMinor: n }); var ok = await act(async function () { await B.saveGoal(updated); S.goals = S.goals.map(function (x) { return x.id === id ? updated : x; }); persist(); }); if (ok) { motionRefreshRequested = true; toast('Progreso actualizado'); render(); }
   }
   function viewAllocation() {
     var a = S.allocation || { invest: 10, enjoyment: 20, savings: 20, emergency: 10, needs: 40 }, income = monthSummary(today().slice(0, 7), S.displayCurrency).inc;
@@ -1138,7 +1147,7 @@
   async function saveAllocationClick() {
     var a = { invest: Number(document.getElementById('alloc-invest').value), enjoyment: Number(document.getElementById('alloc-enjoyment').value), savings: Number(document.getElementById('alloc-savings').value), emergency: Number(document.getElementById('alloc-emergency').value), needs: Number(document.getElementById('alloc-needs').value) };
     var vals = Object.keys(a).map(function (k) { return a[k]; }); if (vals.some(function (n) { return !Number.isInteger(n) || n < 0 || n > 100; }) || vals.reduce(function (n, x) { return n + x; }, 0) !== 100) { toast('Los porcentajes deben ser números enteros entre 0 y 100 que sumen exactamente 100 %.'); return; }
-    var ok = await act(async function () { await B.saveAllocation(a); S.allocation = a; persist(); }); if (ok) { toast('Distribución guardada'); render(); }
+    var ok = await act(async function () { await B.saveAllocation(a); S.allocation = a; persist(); }); if (ok) { motionRefreshRequested = true; toast('Distribución guardada'); render(); }
   }
 
   function assistantSnapshot() {
@@ -1343,7 +1352,7 @@
         return '<button class="link" data-a="sub" data-v="' + i[0] + '"><span class="e" aria-hidden="true">' + i[1] + '</span><span class="col"><b>' + i[2] + '</b><span class="muted">' + i[3] + '</span></span><span class="chev" aria-hidden="true">›</span></button>';
       }).join('');
       if (CLOUD && user) h += '<button class="btn quiet" data-a="logout">Cerrar sesión</button>';
-      return h + '<div class="muted">Cuadre v0.5.1 · ' + (CLOUD ? 'tus datos están en la nube.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
+      return h + '<div class="muted">Cuadre v0.7 Motion Edition · ' + (CLOUD ? 'tus datos están en la nube.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
     }
     var back = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button>';
     if (sub === 'budgets') return viewBudgets();
@@ -1458,19 +1467,79 @@
     return '';
   }
 
+  function animateHeroNumbers() {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var els = $app.querySelectorAll('.hero');
+    if (!els.length || typeof window.requestAnimationFrame !== 'function') return;
+    if (heroAnimationFrame) cancelAnimationFrame(heroAnimationFrame);
+    els.forEach(function (el) {
+      var finalText = el.textContent || '', match = /(\d[\d.]*)(?:,(\d{1,2}))?/.exec(finalText);
+      if (!match) return;
+      var whole = Number(match[1].replace(/\./g, '')), cents = Number((match[2] || '').padEnd(2, '0') || 0);
+      var targetMinor = whole * 100 + cents;
+      if (!Number.isFinite(targetMinor) || targetMinor < 0 || targetMinor > 1e15) return;
+      var prefix = finalText.slice(0, match.index), suffix = finalText.slice(match.index + match[0].length);
+      var started = 0, duration = 560;
+      function tick(now) {
+        if (!started) started = now;
+        var progress = Math.min(1, (now - started) / duration);
+        // Easing out: rápido al inicio y suave al terminar.
+        var eased = 1 - Math.pow(1 - progress, 3);
+        var current = Math.round(targetMinor * eased), nWhole = Math.floor(current / 100), nCents = current % 100;
+        var number = group(String(nWhole)) + (match[2] !== undefined ? ',' + String(nCents).padStart(2, '0') : '');
+        el.textContent = prefix + number + suffix;
+        if (progress < 1 && el.isConnected) heroAnimationFrame = requestAnimationFrame(tick);
+        else el.textContent = finalText;
+      }
+      el.textContent = prefix + (match[2] !== undefined ? '0,00' : '0') + suffix;
+      heroAnimationFrame = requestAnimationFrame(tick);
+    });
+  }
+  function renderQuickActions() {
+    if (!$quickActions) return;
+    $quickActions.hidden = !quickActionsOpen;
+    $quickActions.innerHTML = quickActionsOpen
+      ? '<button class="quick-action" data-a="quick-action" data-v="expense"><span class="quick-icon" aria-hidden="true">↗</span><span>Gasto</span></button>' +
+        '<button class="quick-action" data-a="quick-action" data-v="income"><span class="quick-icon" aria-hidden="true">↙</span><span>Ingreso</span></button>' +
+        '<button class="quick-action" data-a="quick-action" data-v="transfer"><span class="quick-icon" aria-hidden="true">⇄</span><span>Transferir</span></button>'
+      : '';
+  }
+  function closeQuickActions() {
+    quickActionsOpen = false;
+    renderQuickActions();
+    var plus = $nav ? $nav.querySelector('.plus') : null;
+    if (plus) { plus.textContent = '+'; plus.setAttribute('aria-expanded', 'false'); plus.setAttribute('aria-label', 'Registrar un movimiento'); }
+  }
   function render() {
     if (!S) return;
+    var motionViewKey = tab + ':' + sub;
+    var shouldAnimateView = motionViewKey !== lastMotionViewKey || motionRefreshRequested;
+    motionRefreshRequested = false;
+    lastMotionViewKey = motionViewKey;
     $app.innerHTML = tab === 'home' ? viewHome() : tab === 'moves' ? viewMoves() : tab === 'pay' ? viewPay() : viewMore();
+    if (shouldAnimateView && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+      $app.classList.remove('motion-enter');
+      // Fuerza un nuevo ciclo de animación solo al cambiar de pantalla, no al actualizar cifras.
+      void $app.offsetWidth;
+      $app.classList.add('motion-enter');
+      clearTimeout(motionResetTimer);
+      motionResetTimer = setTimeout(function () { $app.classList.remove('motion-enter'); }, 900);
+      if (tab === 'home') animateHeroNumbers();
+    } else {
+      $app.classList.remove('motion-enter');
+    }
     $navwrap.hidden = false;
     var tabs = [['home', '🏠', 'Inicio'], ['moves', '↕️', 'Movimientos'], ['pay', '🗓️', 'Pagos'], ['more', '⋯', 'Más']], nb = urgent().filter(function (i) { return i.level === 'late' || i.level === 'today'; }).length;
     var btn = function (t) {
       return '<button data-a="tab" data-v="' + t[0] + '"' + (tab === t[0] ? ' aria-current="page"' : '') + '><span class="e" aria-hidden="true">' + t[1] + '</span>' + t[2] + (t[0] === 'pay' && nb ? '<i class="dot" aria-label="' + nb + ' por atender">' + nb + '</i>' : '') + '</button>';
     };
-    $nav.innerHTML = btn(tabs[0]) + btn(tabs[1]) + '<button class="plus" data-a="new" aria-label="Registrar un movimiento">+</button>' + btn(tabs[2]) + btn(tabs[3]);
+    $nav.innerHTML = btn(tabs[0]) + btn(tabs[1]) + '<button class="plus" data-a="new" aria-label="' + (quickActionsOpen ? 'Cerrar acciones rápidas' : 'Registrar un movimiento') + '" aria-expanded="' + quickActionsOpen + '">' + (quickActionsOpen ? '×' : '+') + '</button>' + btn(tabs[2]) + btn(tabs[3]);
+    renderQuickActions();
   }
 
   /* ---------- 10. Pantalla de acceso (modo nube) ---------- */
   function renderAuth() {
+    quickActionsOpen = false; renderQuickActions();
     $navwrap.hidden = true; sheet = null; renderSheet();
     var signup = authMode === 'signup', resetMode = authMode === 'reset', updateMode = authMode === 'updatePassword';
     var heading = signup ? 'Crea tu cuenta para guardar tus finanzas en la nube y usarlas desde cualquier dispositivo.' : resetMode ? 'Te enviaremos un enlace para recuperar el acceso.' : updateMode ? 'Elige una contraseña nueva para tu cuenta.' : 'Inicia sesión para ver tus finanzas.';
@@ -1620,7 +1689,7 @@
       if (existing) S.transactions = S.transactions.map(function (x) { return x.id === tx.id ? tx : x; }); else S.transactions.push(tx);
       persist();
     });
-    if (ok) { if (s.pay) await afterPay(s.pay); sheet = null; renderSheet(); render(); } else if (sheet) { sheet.saving = false; renderSheet(false); }
+    if (ok) { if (s.pay) await afterPay(s.pay); sheet = null; renderSheet(); motionRefreshRequested = true; render(); } else if (sheet) { sheet.saving = false; renderSheet(false); }
   }
   async function deleteTx() {
     var s = sheet; if (!s || s.saving) return;
@@ -1630,7 +1699,7 @@
       S.transactions = S.transactions.filter(function (x) { return x.id !== s.id; });
       persist();
     });
-    if (ok) { sheet = null; renderSheet(); render(); } else if (sheet) { sheet.saving = false; sheet.confirmDelete = false; renderSheet(false); }
+    if (ok) { sheet = null; renderSheet(); motionRefreshRequested = true; render(); } else if (sheet) { sheet.saving = false; sheet.confirmDelete = false; renderSheet(false); }
   }
 
   /* ---------- 11b. Cuentas y perfil ---------- */
@@ -1843,6 +1912,18 @@
   }
 
   async function handleExtra(a, el, id, v) {
+    if (a === 'quick-action') {
+      closeQuickActions();
+      if (v === 'expense') { openSheet(null); return true; }
+      if (v === 'income') {
+        openSheet(null);
+        if (sheet) { sheet.type = 'income'; sheet.categoryId = (catsFor('income')[0] || {}).id || null; sheet.accountId = defaultAccount(sheet.currency); renderSheet(true); }
+        return true;
+      }
+      if (v === 'transfer') { tab = 'more'; sub = 'transfers'; render(); window.scrollTo(0, 0); return true; }
+      return true;
+    }
+    if (a === 'quick-close') { quickActionsOpen = false; render(); return true; }
     if (a === 'refresh-report') { render(); return true; }
     if (a === 'download-backup') { var backup = JSON.stringify(S, function (k, value) { return k === 'profile' ? undefined : value; }, 2); downloadBlob(backup, 'application/json;charset=utf-8', 'Cuadre_copia_' + today() + '.json'); toast('Copia JSON descargada'); return true; }
     if (a === 'confirm-csv-import') { await confirmCsvImport(); return true; }
@@ -2089,9 +2170,17 @@
     ev.preventDefault();
     if (ev.target.id === 'authform') submitAuth();
   });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && quickActionsOpen) closeQuickActions();
+  });
   document.addEventListener('click', async function (ev) {
-    var el = ev.target.closest('[data-a]'); if (!el) return;
+    var el = ev.target.closest('[data-a]');
+    if (!el) {
+      if (quickActionsOpen && !ev.target.closest('#quick-actions, .nav .plus')) closeQuickActions();
+      return;
+    }
     var a = el.dataset.a, v = el.dataset.v, id = el.dataset.id;
+    if (quickActionsOpen && a !== 'new' && a !== 'quick-action' && a !== 'quick-close') closeQuickActions();
     try {
       if (await handleExtra(a, el, id, v)) return;
       if (a === 'close-scrim') { if (ev.target === el) { sheet = null; renderSheet(); } return; }
@@ -2100,7 +2189,7 @@
       if (a === 'forgot-password') { authMode = 'reset'; authMsg = null; renderAuth(); return; }
       if (a === 'remove-receipt') { if (sheet) { sheet.receiptImage = ''; renderSheet(false); } return; }
       if (a === 'repeat-tx') { if (sheet) { var oldSheet = sheet; sheet = Object.assign({}, oldSheet, { id: null, dateMode: 'today', customDate: today(), receiptImage: '', errors: {}, confirmDelete: false, saving: false, pay: null }); renderSheet(false); toast('Movimiento listo para repetir. Revisa el monto y guárdalo.'); } return; }
-      if (a === 'tab') { arm = null; fd = null; tab = v; sub = 'menu'; msg = null; topMsg = null; render(); window.scrollTo(0, 0); return; }
+      if (a === 'tab') { quickActionsOpen = false; arm = null; fd = null; tab = v; sub = 'menu'; msg = null; topMsg = null; render(); window.scrollTo(0, 0); return; }
       if (a === 'goto-profile') { tab = 'more'; sub = 'profile'; msg = null; startProfileDraft(); render(); window.scrollTo(0, 0); return; }
       if (a === 'goto-rate') { tab = 'more'; sub = 'rate'; msg = null; render(); window.scrollTo(0, 0); return; }
       if (a === 'sub') { arm = null; sub = v; msg = null; topMsg = null; rateErr = null; if (v === 'profile') startProfileDraft(); render(); window.scrollTo(0, 0); return; }
@@ -2112,7 +2201,7 @@
       if (a === 'save-profile') { await saveProfileClick(); return; }
       if (a === 'disp') { S.displayCurrency = v; persist(); render(); return; }
       if (a === 'filter') { filter = v; render(); return; }
-      if (a === 'new') { openSheet(null); return; }
+      if (a === 'new') { quickActionsOpen = !quickActionsOpen; render(); return; }
       if (a === 'edit') { openSheet(id); return; }
       if (a === 'retry') { await startApp(); return; }
       if (a === 'logout') {
