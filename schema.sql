@@ -330,3 +330,132 @@ revoke all on public.scheduled_payments, public.installment_plans, public.debts,
 grant select, insert, update, delete on public.scheduled_payments, public.installment_plans, public.debts, public.budgets to authenticated;
 
 -- Al borrar una cuenta, también hay que soltarla de los pagos que la usaban (lo hace sola la regla "set null").
+
+-- =====================================================================
+-- v0.4.1: recibos, transferencias internas, metas, distribución y tasas históricas.
+-- Migración idempotente: puede ejecutarse de nuevo sin borrar movimientos existentes.
+-- =====================================================================
+
+-- Fotos de recibos pequeñas (comprimidas por el navegador antes de guardarlas).
+alter table public.transactions
+  add column if not exists receipt_image text
+  check (receipt_image is null or (char_length(receipt_image) <= 240000 and receipt_image like 'data:image/%'));
+
+-- Distribución sugerida del ingreso. Debe sumar 100 %; la validación se hace en la app.
+alter table public.settings
+  add column if not exists alloc_invest integer not null default 10 check (alloc_invest between 0 and 100),
+  add column if not exists alloc_enjoyment integer not null default 20 check (alloc_enjoyment between 0 and 100),
+  add column if not exists alloc_savings integer not null default 20 check (alloc_savings between 0 and 100),
+  add column if not exists alloc_emergency integer not null default 10 check (alloc_emergency between 0 and 100),
+  add column if not exists alloc_needs integer not null default 40 check (alloc_needs between 0 and 100);
+
+-- Transferencias separadas de los movimientos. No se tratan como ingresos ni gastos.
+create table if not exists public.account_transfers (
+  id                 uuid primary key default gen_random_uuid(),
+  user_id            uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  from_account_id    uuid not null,
+  to_account_id      uuid not null,
+  from_amount_minor  bigint not null check (from_amount_minor > 0 and from_amount_minor <= 10000000000000),
+  to_amount_minor    bigint not null check (to_amount_minor > 0 and to_amount_minor <= 10000000000000),
+  from_currency      text not null check (from_currency in ('VES', 'USD')),
+  to_currency        text not null check (to_currency in ('VES', 'USD')),
+  rate_e4            bigint not null default 0 check (rate_e4 >= 0),
+  date               date not null default current_date,
+  note               text not null default '' check (char_length(note) <= 120),
+  created_at         timestamptz not null default now(),
+  unique (user_id, id),
+  check (from_account_id <> to_account_id),
+  check (from_currency <> to_currency or from_amount_minor = to_amount_minor),
+  foreign key (user_id, from_account_id) references public.accounts (user_id, id) on delete restrict,
+  foreign key (user_id, to_account_id)   references public.accounts (user_id, id) on delete restrict
+);
+create index if not exists account_transfers_user_date_idx on public.account_transfers (user_id, date desc, created_at desc);
+
+create or replace function public.check_transfer_accounts()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+  from_currency_actual text;
+  to_currency_actual text;
+begin
+  select currency into from_currency_actual from public.accounts where id = new.from_account_id and user_id = new.user_id;
+  select currency into to_currency_actual from public.accounts where id = new.to_account_id and user_id = new.user_id;
+  if from_currency_actual is null or to_currency_actual is null then
+    raise exception 'Las dos cuentas deben existir y pertenecer al mismo usuario' using errcode = '23503';
+  end if;
+  if new.from_currency is distinct from from_currency_actual or new.to_currency is distinct from to_currency_actual then
+    raise exception 'La moneda de la transferencia no coincide con la moneda de las cuentas' using errcode = '23514';
+  end if;
+  if new.from_currency <> new.to_currency and new.rate_e4 <= 0 then
+    raise exception 'Una transferencia entre monedas necesita una tasa positiva' using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists account_transfers_check_accounts on public.account_transfers;
+create trigger account_transfers_check_accounts before insert or update on public.account_transfers
+for each row execute function public.check_transfer_accounts();
+
+-- Metas de ahorro con progreso explícito; no mueve dinero por sí misma.
+create table if not exists public.savings_goals (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  name        text not null check (char_length(btrim(name)) between 1 and 60),
+  target_minor bigint not null check (target_minor > 0 and target_minor <= 10000000000000),
+  saved_minor  bigint not null default 0 check (saved_minor >= 0 and saved_minor <= 10000000000000),
+  currency    text not null check (currency in ('VES', 'USD')),
+  due_date    date,
+  note        text not null default '' check (char_length(note) <= 120),
+  created_at  timestamptz not null default now(),
+  unique (user_id, id),
+  check (saved_minor <= target_minor)
+);
+
+-- Historial de tasas para estimar cambios del valor referencial del saldo en bolívares.
+create table if not exists public.exchange_rate_history (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  rate_e4     bigint not null check (rate_e4 > 0),
+  source      text not null default 'manual' check (source in ('manual', 'bcv', 'none')),
+  recorded_at timestamptz not null default now(),
+  unique (user_id, id)
+);
+create index if not exists exchange_rate_history_user_time_idx on public.exchange_rate_history (user_id, recorded_at desc);
+
+alter table public.account_transfers enable row level security;
+alter table public.savings_goals enable row level security;
+alter table public.exchange_rate_history enable row level security;
+
+drop policy if exists "account_transfers: solo el dueño" on public.account_transfers;
+create policy "account_transfers: solo el dueño" on public.account_transfers
+  for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+drop policy if exists "savings_goals: solo el dueño" on public.savings_goals;
+create policy "savings_goals: solo el dueño" on public.savings_goals
+  for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+drop policy if exists "exchange_rate_history: solo el dueño" on public.exchange_rate_history;
+create policy "exchange_rate_history: solo el dueño" on public.exchange_rate_history
+  for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+
+revoke all on public.account_transfers, public.savings_goals, public.exchange_rate_history from anon;
+grant select, insert, update, delete on public.account_transfers, public.savings_goals, public.exchange_rate_history to authenticated;
+
+-- La eliminación de una cuenta también elimina transferencias donde participa.
+create or replace function public.delete_account(p_id uuid)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Debes iniciar sesión' using errcode = '28000';
+  end if;
+  delete from public.account_transfers where user_id = auth.uid() and (from_account_id = p_id or to_account_id = p_id);
+  delete from public.transactions where account_id = p_id and user_id = auth.uid();
+  delete from public.accounts where id = p_id and user_id = auth.uid();
+end;
+$$;
+revoke execute on function public.delete_account(uuid) from public, anon;
+grant execute on function public.delete_account(uuid) to authenticated;
