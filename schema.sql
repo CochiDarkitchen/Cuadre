@@ -459,3 +459,251 @@ end;
 $$;
 revoke execute on function public.delete_account(uuid) from public, anon;
 grant execute on function public.delete_account(uuid) to authenticated;
+
+-- =====================================================================
+-- v0.5: aportes de metas, espacios compartidos familiares y libro de hogar.
+-- Migración idempotente: no elimina los datos anteriores.
+-- =====================================================================
+
+-- Historial de aportes a una meta. Un aporte es una reserva interna, no un gasto.
+create table if not exists public.goal_contributions (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  goal_id      uuid not null,
+  amount_minor bigint not null check (amount_minor > 0 and amount_minor <= 10000000000000),
+  currency     text not null check (currency in ('VES', 'USD')),
+  date         date not null default current_date,
+  note         text not null default '' check (char_length(note) <= 120),
+  created_at   timestamptz not null default now(),
+  foreign key (user_id, goal_id) references public.savings_goals (user_id, id) on delete cascade
+);
+create index if not exists goal_contributions_user_goal_idx on public.goal_contributions (user_id, goal_id, date desc);
+alter table public.goal_contributions enable row level security;
+drop policy if exists "goal_contributions: solo el dueño" on public.goal_contributions;
+create policy "goal_contributions: solo el dueño" on public.goal_contributions
+  for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+revoke all on public.goal_contributions from anon;
+grant select, insert, update, delete on public.goal_contributions to authenticated;
+
+-- Aporte transaccional: guarda el registro y actualiza el progreso atómicamente.
+create or replace function public.contribute_to_goal(p_goal_id uuid, p_amount_minor bigint, p_date date default current_date, p_note text default '')
+returns uuid
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+  g public.savings_goals%rowtype;
+  contribution_id uuid;
+begin
+  if uid is null then raise exception 'Debes iniciar sesión' using errcode = '28000'; end if;
+  if p_amount_minor is null or p_amount_minor <= 0 then raise exception 'El aporte debe ser mayor que cero' using errcode = '23514'; end if;
+  select * into g from public.savings_goals where id = p_goal_id and user_id = uid for update;
+  if not found then raise exception 'No se encontró la meta' using errcode = 'P0002'; end if;
+  if g.saved_minor + p_amount_minor > g.target_minor then raise exception 'El aporte supera lo que falta para la meta' using errcode = '23514'; end if;
+  insert into public.goal_contributions (user_id, goal_id, amount_minor, currency, date, note)
+    values (uid, g.id, p_amount_minor, g.currency, coalesce(p_date, current_date), left(coalesce(p_note, ''), 120))
+    returning id into contribution_id;
+  update public.savings_goals set saved_minor = saved_minor + p_amount_minor where id = g.id and user_id = uid;
+  return contribution_id;
+end;
+$$;
+revoke execute on function public.contribute_to_goal(uuid, bigint, date, text) from public, anon;
+grant execute on function public.contribute_to_goal(uuid, bigint, date, text) to authenticated;
+
+-- Espacios compartidos. El libro familiar es independiente del libro personal:
+-- compartirlo nunca concede acceso a las tablas personales del miembro.
+create table if not exists public.family_spaces (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null check (char_length(btrim(name)) between 1 and 60),
+  owner_id   uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (id, owner_id)
+);
+create table if not exists public.family_members (
+  space_id  uuid not null references public.family_spaces (id) on delete cascade,
+  user_id   uuid not null references auth.users (id) on delete cascade,
+  role      text not null default 'member' check (role in ('owner', 'member')),
+  joined_at timestamptz not null default now(),
+  primary key (space_id, user_id)
+);
+create index if not exists family_members_user_idx on public.family_members (user_id, space_id);
+
+-- El código no se puede leer directamente desde el navegador; solo se obtiene al crear un espacio.
+create table if not exists public.family_invites (
+  id          uuid primary key default gen_random_uuid(),
+  space_id    uuid not null references public.family_spaces (id) on delete cascade,
+  invite_code text not null unique,
+  created_by  uuid not null references auth.users (id) on delete cascade,
+  expires_at  timestamptz not null default (now() + interval '30 days'),
+  max_uses    integer not null default 10 check (max_uses between 1 and 50),
+  uses        integer not null default 0 check (uses >= 0),
+  active      boolean not null default true,
+  created_at  timestamptz not null default now()
+);
+create index if not exists family_invites_code_idx on public.family_invites (invite_code) where active;
+
+create table if not exists public.family_expenses (
+  id           uuid primary key default gen_random_uuid(),
+  space_id     uuid not null references public.family_spaces (id) on delete cascade,
+  created_by   uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  title        text not null check (char_length(btrim(title)) between 1 and 80),
+  amount_minor bigint not null check (amount_minor > 0 and amount_minor <= 10000000000000),
+  currency     text not null check (currency in ('VES', 'USD')),
+  category     text not null default '' check (char_length(category) <= 40),
+  paid_by      text not null default '' check (char_length(paid_by) <= 60),
+  date         date not null default current_date,
+  note         text not null default '' check (char_length(note) <= 120),
+  created_at   timestamptz not null default now()
+);
+create index if not exists family_expenses_space_date_idx on public.family_expenses (space_id, date desc, created_at desc);
+
+create or replace function public.is_family_member(p_space_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (select 1 from public.family_members m where m.space_id = p_space_id and m.user_id = auth.uid());
+$$;
+create or replace function public.is_family_owner(p_space_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (select 1 from public.family_members m where m.space_id = p_space_id and m.user_id = auth.uid() and m.role = 'owner');
+$$;
+revoke execute on function public.is_family_member(uuid) from public, anon;
+revoke execute on function public.is_family_owner(uuid) from public, anon;
+grant execute on function public.is_family_member(uuid) to authenticated;
+grant execute on function public.is_family_owner(uuid) to authenticated;
+
+create or replace function public.create_family_space(p_name text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+  sid uuid;
+  code text;
+  clean_name text := btrim(coalesce(p_name, ''));
+begin
+  if uid is null then raise exception 'Debes iniciar sesión' using errcode = '28000'; end if;
+  if char_length(clean_name) < 1 or char_length(clean_name) > 60 then raise exception 'El nombre debe tener entre 1 y 60 caracteres' using errcode = '23514'; end if;
+  insert into public.family_spaces (name, owner_id) values (clean_name, uid) returning id into sid;
+  insert into public.family_members (space_id, user_id, role) values (sid, uid, 'owner');
+  code := upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 20));
+  insert into public.family_invites (space_id, invite_code, created_by) values (sid, code, uid);
+  return jsonb_build_object('space_id', sid, 'invite_code', code, 'name', clean_name);
+end;
+$$;
+
+create or replace function public.join_family_space(p_invite_code text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+  inv public.family_invites%rowtype;
+begin
+  if uid is null then raise exception 'Debes iniciar sesión' using errcode = '28000'; end if;
+  select * into inv from public.family_invites where invite_code = upper(btrim(coalesce(p_invite_code, ''))) and active = true for update;
+  if not found or inv.expires_at < now() or inv.uses >= inv.max_uses then raise exception 'El código de invitación no es válido, venció o alcanzó su límite' using errcode = '22023'; end if;
+  insert into public.family_members (space_id, user_id, role) values (inv.space_id, uid, 'member') on conflict (space_id, user_id) do nothing;
+  update public.family_invites set uses = uses + 1, active = (uses + 1 < max_uses) where id = inv.id;
+  return inv.space_id;
+end;
+$$;
+revoke execute on function public.create_family_space(text) from public, anon;
+revoke execute on function public.join_family_space(text) from public, anon;
+grant execute on function public.create_family_space(text) to authenticated;
+grant execute on function public.join_family_space(text) to authenticated;
+
+alter table public.family_spaces enable row level security;
+alter table public.family_members enable row level security;
+alter table public.family_invites enable row level security;
+alter table public.family_expenses enable row level security;
+
+drop policy if exists "family_spaces: integrantes pueden ver" on public.family_spaces;
+create policy "family_spaces: integrantes pueden ver" on public.family_spaces
+  for select to authenticated using (public.is_family_member(id));
+drop policy if exists "family_spaces: dueño administra" on public.family_spaces;
+create policy "family_spaces: dueño administra" on public.family_spaces
+  for update to authenticated using (owner_id = (select auth.uid())) with check (owner_id = (select auth.uid()));
+drop policy if exists "family_spaces: dueño elimina" on public.family_spaces;
+create policy "family_spaces: dueño elimina" on public.family_spaces
+  for delete to authenticated using (owner_id = (select auth.uid()));
+
+drop policy if exists "family_members: integrantes leen" on public.family_members;
+create policy "family_members: integrantes leen" on public.family_members
+  for select to authenticated using (user_id = (select auth.uid()) or public.is_family_member(space_id));
+-- Sin políticas de escritura directa en family_members: altas solo por RPC seguro.
+-- Sin política SELECT en family_invites: los códigos no se enumeran desde el cliente.
+
+drop policy if exists "family_expenses: integrantes leen" on public.family_expenses;
+create policy "family_expenses: integrantes leen" on public.family_expenses
+  for select to authenticated using (public.is_family_member(space_id));
+drop policy if exists "family_expenses: integrantes crean" on public.family_expenses;
+create policy "family_expenses: integrantes crean" on public.family_expenses
+  for insert to authenticated with check (created_by = (select auth.uid()) and public.is_family_member(space_id));
+drop policy if exists "family_expenses: autor o dueño edita" on public.family_expenses;
+create policy "family_expenses: autor o dueño edita" on public.family_expenses
+  for update to authenticated using (created_by = (select auth.uid()) or public.is_family_owner(space_id))
+  with check (created_by = (select auth.uid()) or public.is_family_owner(space_id));
+drop policy if exists "family_expenses: autor o dueño elimina" on public.family_expenses;
+create policy "family_expenses: autor o dueño elimina" on public.family_expenses
+  for delete to authenticated using (created_by = (select auth.uid()) or public.is_family_owner(space_id));
+
+revoke all on public.family_spaces, public.family_members, public.family_invites, public.family_expenses from anon;
+grant select, update, delete on public.family_spaces to authenticated;
+grant select on public.family_members to authenticated;
+grant select, insert, update, delete on public.family_expenses to authenticated;
+
+
+-- =====================================================================
+-- v0.5.1: suscripciones Web Push y registro de envíos para evitar duplicados.
+-- El navegador puede crear/borrar solo su propia suscripción. El emisor programado
+-- usa la clave service_role exclusivamente en el entorno servidor.
+-- =====================================================================
+create table if not exists public.push_subscriptions (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  endpoint        text not null unique check (char_length(endpoint) between 20 and 2048),
+  p256dh          text not null check (char_length(p256dh) between 20 and 256),
+  auth            text not null check (char_length(auth) between 10 and 128),
+  expiration_time bigint,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  unique (user_id, id)
+);
+create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id, created_at desc);
+alter table public.push_subscriptions enable row level security;
+drop policy if exists "push_subscriptions: solo el dueño" on public.push_subscriptions;
+create policy "push_subscriptions: solo el dueño" on public.push_subscriptions
+  for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+revoke all on public.push_subscriptions from anon;
+grant select, insert, update, delete on public.push_subscriptions to authenticated;
+
+-- Log privado del servidor (no se concede acceso al cliente). Se guarda una huella de
+-- la notificación y la fecha, no el contenido financiero enviado.
+create table if not exists public.push_delivery_log (
+  id                uuid primary key default gen_random_uuid(),
+  subscription_id   uuid not null references public.push_subscriptions (id) on delete cascade,
+  notification_key  text not null check (char_length(notification_key) between 1 and 160),
+  sent_on           date not null default current_date,
+  created_at        timestamptz not null default now(),
+  unique (subscription_id, notification_key, sent_on)
+);
+create index if not exists push_delivery_log_sent_idx on public.push_delivery_log (sent_on desc);
+alter table public.push_delivery_log enable row level security;
+revoke all on public.push_delivery_log from anon, authenticated;
+grant select, insert, delete on public.push_subscriptions to service_role;
+grant select, insert, update, delete on public.push_delivery_log to service_role;
