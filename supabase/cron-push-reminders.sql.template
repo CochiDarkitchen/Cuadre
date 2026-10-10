@@ -1,0 +1,33 @@
+-- PLANTILLA OPCIONAL: ejecutar solo después de desplegar send-reminders.
+-- 1. Habilita las extensiones pg_cron, pg_net y Vault desde Supabase Dashboard.
+-- 2. Guarda un secreto aleatorio largo con el nombre cuadre_push_scheduler_secret
+--    en Vault. El valor debe ser idéntico a PUSH_SCHEDULER_SECRET en Edge Functions.
+-- 3. Sustituye PROJECT_REF por el ref de tu proyecto y ejecuta este archivo en SQL Editor.
+-- 4. La expresión cron está en UTC: '0 13 * * *' = todos los días a las 13:00 UTC.
+-- Ajusta esa hora según la zona horaria en la que quieras enviar recordatorios.
+
+-- Evita crear dos horarios con el mismo nombre al volver a instalar la plantilla.
+select cron.unschedule(jobid) from cron.job where jobname = 'cuadre-push-reminders-daily';
+
+select cron.schedule(
+  'cuadre-push-reminders-daily',
+  '0 13 * * *',
+  $$
+    select net.http_post(
+      url := 'https://PROJECT_REF.supabase.co/functions/v1/send-reminders',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'x-scheduler-secret', (
+          select decrypted_secret
+          from vault.decrypted_secrets
+          where name = 'cuadre_push_scheduler_secret'
+          limit 1
+        )
+      ),
+      body := '{}'::jsonb
+    );
+  $$
+);
+
+-- Para quitar el horario:
+-- select cron.unschedule('cuadre-push-reminders-daily');
