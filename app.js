@@ -17,7 +17,7 @@
   var CONFIG = {
     SUPABASE_URL: 'https://qfkmtxekvywlcgfimwsg.supabase.co',        // Ejemplo: ''
     SUPABASE_ANON_KEY: 'sb_publishable_JXA4mOZJH3eRJeKd8s6YZw_Y4shklIr'    // Ejemplo: 'eyJhbGciOi...'
-    VAPID_PUBLIC_KEY: 'BMXienvznWzFHZ_6bto-Pw34SeP791P1eFOsRI3yK4ms6Fu7piR1OOnct0I471G-BRMo6U1d6pnamQZy-bQpHRQ'   // Clave pública Web Push (opcional; nunca pongas aquí la clave privada)
+    VAPID_PUBLIC_KEY: 'BMXienvznWzFHZ_6bto-Pw34SeP791P1eFOsRI3yK4ms6Fu7piR1OOnct0I471G-BRMo6U1d6pnamQZy-bQpHRQ'
   };
 
   // Limpia lo pegado: agrega https:// si falta y quita barras o rutas de más (/rest/v1).
