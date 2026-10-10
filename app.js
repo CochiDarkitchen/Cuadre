@@ -166,6 +166,22 @@
       img.src = url;
     });
   }
+  function imageBoundedDataUrl(file, maxSide, type, quality) {
+    return new Promise(function (resolve, reject) {
+      if (!file || !/^image\//.test(file.type || '')) { reject(new Error('imagen')); return; }
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        try {
+          var w0 = img.naturalWidth, h0 = img.naturalHeight; if (!w0 || !h0) throw new Error('imagen');
+          var scale = Math.min(1, maxSide / Math.max(w0, h0)), w = Math.max(1, Math.round(w0 * scale)), h = Math.max(1, Math.round(h0 * scale));
+          var c = document.createElement('canvas'); c.width = w; c.height = h; var ctx = c.getContext('2d');
+          if (type === 'image/jpeg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); }
+          ctx.drawImage(img, 0, 0, w, h); var out = c.toDataURL(type, quality); URL.revokeObjectURL(url); resolve(out);
+        } catch (err) { URL.revokeObjectURL(url); reject(new Error('imagen')); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('imagen')); }; img.src = url;
+    });
+  }
   function safeImg(src) { return typeof src === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/=]+$/.test(src) ? src : ''; }
   function pic(src, name, cls) {
     var ok = safeImg(src);
@@ -194,6 +210,9 @@
   var DEFAULT_INCOME = ['Sueldo|💼', 'Freelance|🎨', 'Otros ingresos|➕'];
   function norm(d) {
     d.scheduled = d.scheduled || []; d.plans = d.plans || []; d.debts = d.debts || []; d.budgets = d.budgets || [];
+    d.transfers = Array.isArray(d.transfers) ? d.transfers : []; d.goals = Array.isArray(d.goals) ? d.goals : []; d.rateHistory = Array.isArray(d.rateHistory) ? d.rateHistory : [];
+    d.allocation = Object.assign({ invest: 10, enjoyment: 20, savings: 20, emergency: 10, needs: 40 }, d.allocation || {});
+    if (!d.rateHistory.length && d.rate && Number(d.rate.rateE4) > 0) d.rateHistory.push({ rateE4: Number(d.rate.rateE4), source: d.rate.source || 'none', recordedAt: d.rate.updatedAt || new Date().toISOString() });
     d.prefs = d.prefs || { remindDays: 3 }; if (!(d.prefs.remindDays >= 0)) d.prefs.remindDays = 3;
     d.ref = d.ref || { eur: null, par: null };
     return d;
@@ -208,7 +227,8 @@
       accounts: [['Efectivo Bs', 'VES'], ['Efectivo $', 'USD'], ['Banco 1', 'VES'], ['Banco 2', 'VES'], ['Binance', 'USD']].map(function (a) {
         return { id: uuid(), name: a[0], currency: a[1], openingMinor: 0, createdAt: now };
       }),
-      categories: cats, transactions: [],
+      categories: cats, transactions: [], transfers: [], goals: [], rateHistory: [],
+      allocation: { invest: 10, enjoyment: 20, savings: 20, emergency: 10, needs: 40 },
       rate: { rateE4: 0, updatedAt: null, source: 'none' },
       displayCurrency: 'VES'
     };
@@ -285,16 +305,27 @@
     } catch (e1) {
       if (/schema cache|does not exist|Could not find|relation/i.test((e1 && e1.message) || '')) ex.missing = true; else throw e1;
     }
+    var financeExtras = { transfers: [], goals: [], rateHistory: [] };
+    try {
+      var r3 = await Promise.all([fetchAll('account_transfers', 'created_at', true), fetchAll('savings_goals', 'created_at', true), fetchAll('exchange_rate_history', 'recorded_at', true)]);
+      financeExtras.transfers = r3[0].map(function (x) { return { id: x.id, fromAccountId: x.from_account_id, toAccountId: x.to_account_id, fromAmountMinor: Number(x.from_amount_minor), toAmountMinor: Number(x.to_amount_minor), fromCurrency: x.from_currency, toCurrency: x.to_currency, rateE4: Number(x.rate_e4 || 0), dateISO: x.date, note: x.note || '', createdAt: x.created_at }; });
+      financeExtras.goals = r3[1].map(function (x) { return { id: x.id, name: x.name, targetMinor: Number(x.target_minor), savedMinor: Number(x.saved_minor), currency: x.currency, dueDate: x.due_date || '', note: x.note || '', createdAt: x.created_at }; });
+      financeExtras.rateHistory = r3[2].map(function (x) { return { id: x.id, rateE4: Number(x.rate_e4), source: x.source, recordedAt: x.recorded_at }; });
+    } catch (e3) {
+      if (/schema cache|does not exist|Could not find|relation/i.test((e3 && e3.message) || '')) ex.missing = true; else throw e3;
+    }
+    if (!financeExtras.rateHistory.length && Number(s.rate_e4) > 0 && s.rate_updated_at) financeExtras.rateHistory.push({ rateE4: Number(s.rate_e4), source: s.rate_source || 'none', recordedAt: s.rate_updated_at });
     return {
       version: 1,
-      profile: profile, scheduled: ex.scheduled, plans: ex.plans, debts: ex.debts, budgets: ex.budgets, extrasMissing: ex.missing,
+      profile: profile, scheduled: ex.scheduled, plans: ex.plans, debts: ex.debts, budgets: ex.budgets, transfers: financeExtras.transfers, goals: financeExtras.goals, rateHistory: financeExtras.rateHistory, extrasMissing: ex.missing,
+      allocation: { invest: Number(s.alloc_invest == null ? 10 : s.alloc_invest), enjoyment: Number(s.alloc_enjoyment == null ? 20 : s.alloc_enjoyment), savings: Number(s.alloc_savings == null ? 20 : s.alloc_savings), emergency: Number(s.alloc_emergency == null ? 10 : s.alloc_emergency), needs: Number(s.alloc_needs == null ? 40 : s.alloc_needs) },
       prefs: { remindDays: Number.isInteger(s.remind_days) ? s.remind_days : 3 },
       ref: { eur: Number(s.eur_rate_e4) > 0 ? { rateE4: Number(s.eur_rate_e4), updatedAt: s.eur_updated_at || null } : null, par: Number(s.par_rate_e4) > 0 ? { rateE4: Number(s.par_rate_e4), updatedAt: s.par_updated_at || null } : null },
       accounts: res[0].map(function (a) { return { id: a.id, name: a.name, currency: a.currency, openingMinor: Number(a.opening_minor), createdAt: a.created_at, logo: safeImg(a.logo) }; }),
       categories: res[1].map(function (c) { return { id: c.id, name: c.name, icon: c.icon, kind: c.kind, sortOrder: c.sort_order }; }),
       transactions: res[2].map(function (t) {
         return { id: t.id, type: t.type, amountMinor: Number(t.amount_minor), currency: t.currency, rateE4: Number(t.rate_e4),
-          categoryId: t.category_id, accountId: t.account_id, note: t.note || '', dateISO: t.date, createdAt: t.created_at, updatedAt: t.updated_at, split: Array.isArray(t.split) ? t.split : null };
+          categoryId: t.category_id, accountId: t.account_id, note: t.note || '', dateISO: t.date, createdAt: t.created_at, updatedAt: t.updated_at, split: Array.isArray(t.split) ? t.split : null, receiptImage: safeImg(t.receipt_image) };
       }),
       rate: { rateE4: Number(s.rate_e4 || 0), updatedAt: s.rate_updated_at || null, source: s.rate_source || 'none' },
       displayCurrency: readDisplay()
@@ -320,7 +351,7 @@
   function txRow(t) { var r = txRow0(t); if (t.split) r.split = t.split; return r; }
   function txRow0(t) {
     return { id: t.id, user_id: user.id, type: t.type, amount_minor: t.amountMinor, currency: t.currency, rate_e4: t.rateE4,
-      category_id: t.categoryId, account_id: t.accountId, note: t.note, date: t.dateISO, created_at: t.createdAt, updated_at: t.updatedAt };
+      category_id: t.categoryId, account_id: t.accountId, note: t.note, date: t.dateISO, created_at: t.createdAt, updated_at: t.updatedAt, receipt_image: safeImg(t.receiptImage) || null };
   }
   function accRow(a) {
     var r = { id: a.id, user_id: user.id, name: a.name, currency: a.currency, opening_minor: a.openingMinor, created_at: a.createdAt };
@@ -328,11 +359,18 @@
     return r;
   }
   function catRow(c) { return { id: c.id, user_id: user.id, name: c.name, icon: c.icon, kind: c.kind, sort_order: c.sortOrder }; }
+  function transferRow(t) { return { id: t.id, user_id: user.id, from_account_id: t.fromAccountId, to_account_id: t.toAccountId, from_amount_minor: t.fromAmountMinor, to_amount_minor: t.toAmountMinor, from_currency: t.fromCurrency, to_currency: t.toCurrency, rate_e4: t.rateE4 || 0, date: t.dateISO, note: t.note || '', created_at: t.createdAt }; }
+  function goalRow(g) { return { id: g.id, user_id: user.id, name: g.name, target_minor: g.targetMinor, saved_minor: g.savedMinor, currency: g.currency, due_date: g.dueDate || null, note: g.note || '', created_at: g.createdAt }; }
 
   /* Operaciones de escritura. En modo local no hacen nada (se guarda con persist()). */
   var B = {
     saveTx: async function (t) { if (CLOUD) check(await sb.from('transactions').upsert(txRow(t))); },
     removeTx: async function (id) { if (CLOUD) check(await sb.from('transactions').delete().eq('id', id)); },
+    saveTransfer: async function (t) { if (CLOUD) check(await sb.from('account_transfers').upsert(transferRow(t))); },
+    removeTransfer: async function (id) { if (CLOUD) check(await sb.from('account_transfers').delete().eq('id', id)); },
+    saveGoal: async function (g) { if (CLOUD) check(await sb.from('savings_goals').upsert(goalRow(g))); },
+    removeGoal: async function (id) { if (CLOUD) check(await sb.from('savings_goals').delete().eq('id', id)); },
+    saveAllocation: async function (a) { if (CLOUD) check(await sb.from('settings').upsert({ user_id: user.id, alloc_invest: a.invest, alloc_enjoyment: a.enjoyment, alloc_savings: a.savings, alloc_emergency: a.emergency, alloc_needs: a.needs, updated_at: new Date().toISOString() })); },
     saveAccount: async function (id, fields) { if (CLOUD) check(await sb.from('accounts').update(fields).eq('id', id)); },
     saveProfile: async function (p) {
       if (!CLOUD) return;
@@ -360,6 +398,7 @@
     saveRate: async function (r) {
       if (!CLOUD) return;
       check(await sb.from('settings').upsert({ user_id: user.id, rate_e4: r.rateE4, rate_updated_at: r.updatedAt, rate_source: r.source, updated_at: new Date().toISOString() }));
+      check(await sb.from('exchange_rate_history').insert({ user_id: user.id, rate_e4: r.rateE4, source: r.source || 'manual', recorded_at: r.updatedAt || new Date().toISOString() }));
     }
   };
 
@@ -468,6 +507,7 @@
   function balance(a) {
     var b = a.openingMinor;
     S.transactions.forEach(function (t) { if (t.accountId === a.id) { b += t.type === 'income' ? t.amountMinor : -t.amountMinor; if (t.split) t.split.forEach(function (x) { if (x.settled) b += x.shareMinor; }); } });
+    (S.transfers || []).forEach(function (t) { if (t.fromAccountId === a.id) b -= Number(t.fromAmountMinor || 0); if (t.toAccountId === a.id) b += Number(t.toAmountMinor || 0); });
     return b;
   }
   function totalAvailable(disp) {
@@ -512,7 +552,7 @@
     var sub2 = t.note ? (c ? c.name : 'Sin categoría') : (a ? a.name : 'Sin cuenta');
     return '<button class="tx" data-a="edit" data-id="' + esc(t.id) + '">' +
       '<span class="ico" aria-hidden="true">' + (c ? esc(c.icon) : '❔') + '</span>' +
-      '<span class="mid"><b>' + esc(title) + '</b><span>' + esc(sub2) + ' · ' + shortDate(t.dateISO) + (t.split ? ' · 👥' : '') + '</span></span>' +
+      '<span class="mid"><b>' + esc(title) + '</b><span>' + esc(sub2) + ' · ' + shortDate(t.dateISO) + (t.split ? ' · 👥' : '') + (t.receiptImage ? ' · 🧾' : '') + '</span></span>' +
       '<span class="amt"><b class="' + (pos ? 'pos' : '') + '">' + (pos ? '+' : '-') + fmt(t.amountMinor, t.currency) + '</b>' +
       '<span>≈ ' + fmt(convert(t.amountMinor, t.currency, other, t.rateE4), other) + '</span></span></button>';
   }
@@ -793,6 +833,166 @@
     return '<div class="label">Solo referencia</div>' + card('Euro BCV', r.eur) + card('Dólar paralelo (referencia tipo Binance)', r.par, gap) +
       '<div class="muted">Estas dos tasas no se usan en tus cuentas: todo se convierte con el dólar BCV.</div>';
   }
+  /* ---------- Nuevas funciones Cuadre v0.4: informes y finanzas prácticas ---------- */
+  var quickParsed = null;
+  function normWords(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9$.,@ -]/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function reportPeriod() {
+    var fromEl = document.getElementById('report-from'), toEl = document.getElementById('report-to');
+    var from = fromEl ? fromEl.value : today().slice(0, 7) + '-01', to = toEl ? toEl.value : today();
+    if (!validDate(from) || !validDate(to) || from > to) { toast('Revisa el rango: la fecha inicial debe ser válida y no posterior a la final.'); return null; }
+    return { from: from, to: to };
+  }
+  function reportData(from, to) {
+    var rows = sorted().filter(function (t) { return t.dateISO >= from && t.dateISO <= to; });
+    var inc = 0, exp = 0, by = {};
+    rows.forEach(function (t) {
+      var amount = t.type === 'income' ? t.amountMinor : myMinor(t), value = convert(amount, t.currency, S.displayCurrency, t.rateE4);
+      if (t.type === 'income') inc += value;
+      else { exp += value; var c = catById(t.categoryId); var name = c ? c.name : 'Sin categoría'; by[name] = (by[name] || 0) + value; }
+    });
+    return { rows: rows, inc: inc, exp: exp, net: inc - exp, by: Object.keys(by).map(function (name) { return { name: name, total: by[name] }; }).sort(function (a, b) { return b.total - a.total; }) };
+  }
+  function reportCompare() {
+    var current = today().slice(0, 7), parts = current.split('-').map(Number), prevDate = new Date(parts[0], parts[1] - 2, 1), previous = iso(prevDate).slice(0, 7);
+    return { current: { month: current, summary: monthSummary(current, S.displayCurrency) }, previous: { month: previous, summary: monthSummary(previous, S.displayCurrency) } };
+  }
+  function viewReports() {
+    var p = reportPeriod() || { from: today().slice(0, 7) + '-01', to: today() }, data = reportData(p.from, p.to), cmp = reportCompare();
+    var h = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Reportes</h1>' + banners() +
+      '<div class="card"><div class="label">Período del informe</div><div class="grid2"><div class="field"><label class="label" for="report-from">Desde</label><input id="report-from" type="date" value="' + esc(p.from) + '"></div><div class="field"><label class="label" for="report-to">Hasta</label><input id="report-to" type="date" value="' + esc(p.to) + '"></div></div>' +
+      '<button class="btn quiet" data-a="refresh-report">Aplicar rango</button><div class="row" style="gap:8px"><button class="btn" data-a="export-xlsx">Exportar Excel</button><button class="btn quiet" data-a="export-pdf">Guardar PDF</button></div>' +
+      '<div class="muted">Los movimientos de transferencia quedan fuera de ingresos y gastos. El PDF se genera desde la ventana de impresión del navegador (puedes elegir “Guardar como PDF”).</div></div>' +
+      '<div class="grid2"><div class="card"><div class="label">Ingresos</div><div class="num pos">' + fmt(data.inc, S.displayCurrency) + '</div></div><div class="card"><div class="label">Gastos</div><div class="num" style="color:var(--expense)">' + fmt(data.exp, S.displayCurrency) + '</div></div><div class="card"><div class="label">Balance del período</div><div class="num">' + fmt(data.net, S.displayCurrency) + '</div></div><div class="card"><div class="label">Movimientos</div><div class="num">' + data.rows.length + '</div></div></div>' +
+      '<div class="card"><div class="label">Gastos por categoría</div>';
+    if (data.by.length) data.by.slice(0, 8).forEach(function (x) { var pct = data.exp > 0 ? Math.round(x.total / data.exp * 100) : 0; h += '<div class="col" style="gap:5px;margin:10px 0"><div class="row"><span>' + esc(x.name) + '</span><span class="num">' + fmt(x.total, S.displayCurrency) + ' · ' + pct + '%</span></div><div class="bar"><i style="width:' + Math.max(pct ? 2 : 0, pct) + '%"></i></div></div>'; });
+    else h += '<div class="muted">No hay gastos en este período.</div>';
+    h += '</div><div class="card"><div class="label">Este mes frente al anterior</div><div class="row"><div class="col"><span class="muted">' + esc(monthLabel(cmp.current.month)) + '</span><b>Gastos: ' + fmt(cmp.current.summary.exp, S.displayCurrency) + '</b><span>Ingresos: ' + fmt(cmp.current.summary.inc, S.displayCurrency) + '</span></div><div class="col" style="text-align:right"><span class="muted">' + esc(monthLabel(cmp.previous.month)) + '</span><b>Gastos: ' + fmt(cmp.previous.summary.exp, S.displayCurrency) + '</b><span>Ingresos: ' + fmt(cmp.previous.summary.inc, S.displayCurrency) + '</span></div></div>';
+    var prevExp = cmp.previous.summary.exp, delta = prevExp ? Math.round((cmp.current.summary.exp - prevExp) / prevExp * 100) : null;
+    h += '<div class="muted">' + (delta == null ? 'Todavía no hay gastos del mes anterior para comparar.' : 'Los gastos del mes actual van ' + (delta > 0 ? '↑ ' : delta < 0 ? '↓ ' : '') + Math.abs(delta) + '% ' + (delta > 0 ? 'por encima' : delta < 0 ? 'por debajo' : 'igual que') + ' el mes anterior. El mes actual todavía no ha terminado.') + '</div></div>';
+    var ves = S.accounts.filter(function (a) { return a.currency === 'VES'; }).reduce(function (sum, a) { return sum + balance(a); }, 0), history = (S.rateHistory || []).filter(function (x) { return x.rateE4 > 0 && x.recordedAt && x.recordedAt.slice(0, 10) <= p.to; }).sort(function (a, b) { return b.recordedAt.localeCompare(a.recordedAt); }), ref = history.filter(function (x) { return x.recordedAt.slice(0, 10) <= p.from; })[0] || history[history.length - 1];
+    if (S.rate.rateE4 > 0 && ref && ref.rateE4 > 0) {
+      var oldUsd = convert(ves, 'VES', 'USD', ref.rateE4), nowUsd = convert(ves, 'VES', 'USD', S.rate.rateE4);
+      h += '<div class="card"><div class="label">Efecto estimado de la tasa</div><div class="num">' + fmt(nowUsd, 'USD') + ' al tipo actual</div><div class="muted">El saldo actual en bolívares (' + fmt(ves, 'VES') + ') equivalía aproximadamente a ' + fmt(oldUsd, 'USD') + ' usando la tasa guardada de ' + esc(shortDate(ref.recordedAt.slice(0, 10))) + ' (' + fmtRate(ref.rateE4) + '). Diferencia de valor referencial: ' + fmt(nowUsd - oldUsd, 'USD') + '. No es ganancia ni pérdida contable.</div></div>';
+    } else h += '<div class="card"><div class="label">Efecto de la tasa</div><div class="muted">Se necesita tener una tasa actual y al menos una tasa histórica guardada para estimarlo. Las tasas se empezarán a registrar a partir de esta versión.</div></div>';
+    h += '<div class="card"><div class="label">Cierre de mes · presupuestos actuales</div>';
+    if (S.budgets.length) S.budgets.forEach(function (b) { var c = catById(b.categoryId), spent = budgetSpent(b), pct = Math.round(spent / b.limitMinor * 100); h += '<div class="col" style="gap:5px;margin:10px 0"><div class="row"><span>' + esc(c ? c.name : 'Categoría') + '</span><b>' + pct + '%</b></div><div class="bar ' + (pct >= 100 ? 'over' : pct >= 80 ? 'warnb' : '') + '"><i style="width:' + Math.min(100, pct) + '%"></i></div><div class="muted">' + fmt(spent, b.currency) + ' de ' + fmt(b.limitMinor, b.currency) + (pct >= 100 ? ' · excedido' : ' · restante ' + fmt(b.limitMinor - spent, b.currency)) + '</div></div>'; });
+    else h += '<div class="muted">No tienes presupuestos para revisar.</div>';
+    h += '<div class="muted">Este resumen no bloquea ni modifica movimientos del mes anterior. Para archivar el cierre, exporta el informe a PDF o Excel.</div></div>';
+    return h;
+  }
+  function downloadBlob(content, mime, filename) { var blob = new Blob([content], { type: mime }), url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 1000); }
+  function exportExcel() {
+    var p = reportPeriod(); if (!p) return; var data = reportData(p.from, p.to), rows = data.rows.map(function (t) { var c = catById(t.categoryId), a = accById(t.accountId); return { Fecha: t.dateISO, Tipo: t.type === 'income' ? 'Ingreso' : 'Gasto', Categoria: c ? c.name : 'Sin categoría', Cuenta: a ? a.name : 'Sin cuenta', Nota: t.note || '', 'Monto original': t.amountMinor / 100, 'Monto contabilizado': (t.type === 'income' ? t.amountMinor : myMinor(t)) / 100, Moneda: t.currency, ['Equivalente ' + S.displayCurrency]: convert(t.type === 'income' ? t.amountMinor : myMinor(t), t.currency, S.displayCurrency, t.rateE4) / 100, 'Tasa guardada': t.rateE4 / 10000, 'Tiene recibo': t.receiptImage ? 'Sí' : 'No' }; });
+    rows.push({ Fecha: '', Tipo: 'RESUMEN', Categoria: '', Cuenta: '', Nota: 'Ingresos totales', 'Monto original': '', 'Monto contabilizado': data.inc / 100, Moneda: S.displayCurrency, ['Equivalente ' + S.displayCurrency]: data.inc / 100 });
+    rows.push({ Fecha: '', Tipo: 'RESUMEN', Categoria: '', Cuenta: '', Nota: 'Gastos totales', 'Monto original': '', 'Monto contabilizado': data.exp / 100, Moneda: S.displayCurrency, ['Equivalente ' + S.displayCurrency]: data.exp / 100 });
+    var filename = 'Cuadre_' + p.from + '_' + p.to;
+    if (window.XLSX && window.XLSX.utils) { var wb = XLSX.utils.book_new(), ws = XLSX.utils.json_to_sheet(rows); XLSX.utils.book_append_sheet(wb, ws, 'Movimientos'); XLSX.writeFile(wb, filename + '.xlsx'); }
+    else { var keys = Object.keys(rows[0] || { Fecha: '', Tipo: '', Categoria: '', Cuenta: '', Nota: '', Monto: '', Moneda: '' }); var csv = [keys].concat(rows.map(function (r) { return keys.map(function (k) { return r[k] == null ? '' : r[k]; }); })).map(function (row) { return row.map(function (x) { if (x == null) return '""'; var value = String(x); if (/^[\u0000-\u0020]*[=+\-@]/.test(value)) value = "'" + value; return '"' + value.replace(/"/g, '""') + '"'; }).join(';'); }).join('\r\n'); downloadBlob('\ufeff' + csv, 'text/csv;charset=utf-8', filename + '.csv'); toast('Se descargó un CSV compatible con Excel; no se pudo cargar la librería XLSX.'); }
+  }
+  function exportPdf() {
+    var p = reportPeriod(); if (!p) return; var d = reportData(p.from, p.to), cmp = reportCompare(), win = window.open('', '_blank');
+    if (!win) { toast('El navegador bloqueó la ventana del informe. Permite las ventanas emergentes y vuelve a intentarlo.'); return; }
+    var rows = d.rows.map(function (t) { var c = catById(t.categoryId), a = accById(t.accountId); return '<tr><td>' + esc(t.dateISO) + '</td><td>' + (t.type === 'income' ? 'Ingreso' : 'Gasto') + '</td><td>' + esc(c ? c.name : 'Sin categoría') + '</td><td>' + esc(a ? a.name : 'Sin cuenta') + '</td><td>' + esc(t.note || '') + '</td><td class="right">' + esc(fmt(t.amountMinor, t.currency)) + '</td></tr>'; }).join('');
+    win.document.open(); win.document.write('<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Informe Cuadre ' + esc(p.from) + ' — ' + esc(p.to) + '</title><style>body{font:12px Arial,sans-serif;color:#17221c;margin:24px}h1{margin-bottom:4px}p{color:#555}.cards{display:flex;gap:24px;margin:24px 0}.cards div{border:1px solid #ddd;padding:12px;flex:1}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{padding:7px;border-bottom:1px solid #ddd;text-align:left}th{background:#f1f4f2}.right{text-align:right}@media print{button{display:none}body{margin:10mm}}</style></head><body><h1>Cuadre · Informe financiero</h1><p>Período: ' + esc(p.from) + ' al ' + esc(p.to) + ' · Moneda de resumen: ' + esc(S.displayCurrency) + '</p><div class="cards"><div><b>Ingresos</b><br>' + esc(fmt(d.inc, S.displayCurrency)) + '</div><div><b>Gastos</b><br>' + esc(fmt(d.exp, S.displayCurrency)) + '</div><div><b>Balance</b><br>' + esc(fmt(d.net, S.displayCurrency)) + '</div></div><h2>Movimientos (' + d.rows.length + ')</h2><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Cuenta</th><th>Nota</th><th class="right">Monto contabilizado</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6">No hay movimientos en este rango.</td></tr>') + '</tbody></table><p>Comparación: ' + esc(monthLabel(cmp.current.month)) + ' — gastos ' + esc(fmt(cmp.current.summary.exp, S.displayCurrency)) + '; ' + esc(monthLabel(cmp.previous.month)) + ' — gastos ' + esc(fmt(cmp.previous.summary.exp, S.displayCurrency)) + '.</p><button onclick="window.print()">Imprimir / Guardar como PDF</button><script>window.addEventListener("load",function(){setTimeout(function(){window.print()},250)})<\/script></body></html>'); win.document.close();
+  }
+  function viewQuickEntry() {
+    var preview = '';
+    if (quickParsed) {
+      if (quickParsed.error) preview = '<div class="err">' + esc(quickParsed.error) + '</div>';
+      else preview = '<div class="card"><div class="label">Revisa antes de guardar</div><b>' + esc(quickParsed.type === 'income' ? 'Ingreso' : 'Gasto') + ' · ' + esc(quickParsed.category.name) + '</b><div class="num">' + esc(fmt(quickParsed.amountMinor, quickParsed.currency)) + '</div><div class="muted">' + esc(quickParsed.account.name) + ' · ' + esc(quickParsed.note || 'Sin nota') + '</div><button class="btn" data-a="quick-save">Guardar movimiento</button></div>';
+    }
+    return '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Entrada rápida</h1>' + banners() + '<div class="card"><div class="label">Escribe el movimiento como te salga natural</div><div class="muted">Ejemplos: “almuerzo 5$ efectivo”, “taxi Bs 250 banco 1”, “freelance 80 USD Binance”. Revisa la interpretación antes de guardar.</div><div class="field"><label class="label" for="quick-text">Movimiento</label><input id="quick-text" maxlength="160" placeholder="almuerzo 5$ efectivo" value="' + esc(quickParsed ? quickParsed.raw : '') + '"></div><button class="btn quiet" data-a="quick-parse">Interpretar</button>' + preview + '</div>';
+  }
+  function parseQuickEntry(raw) {
+    var text = String(raw || '').trim(), normalized = normWords(text); if (!text) return { raw: text, error: 'Escribe algo como “almuerzo 5$ efectivo”.' };
+    if (/\b(otra vez|repite|repetir|lo mismo)\b/.test(normalized) && /\bayer\b/.test(normalized)) {
+      var ytx = sorted().filter(function (t) { return t.dateISO === addDays(today(), -1); })[0];
+      if (!ytx) return { raw: text, error: 'No hay movimientos de ayer para repetir.' };
+      var ya = accById(ytx.accountId), yc = catById(ytx.categoryId);
+      if (!ya || !yc) return { raw: text, error: 'El movimiento de ayer usa una cuenta o categoría que ya no existe.' };
+      return { raw: text, amountMinor: ytx.amountMinor, currency: ytx.currency, type: ytx.type, account: ya, category: yc, note: ytx.note || yc.name, rateE4: ytx.rateE4, error: null, repeated: true };
+    }
+    var hit = text.match(/(?:\$\s*)?\d[\d.,]*(?:\s*(?:usd|us\$|\$|bs\.?|bol[ií]vares?))?/i);
+    if (!hit) return { raw: text, error: 'No detecté el monto. Ejemplo: “almuerzo 5$ efectivo”.' };
+    var amtText = hit[0].replace(/\b(?:usd|us\$|bs\.?|bol[ií]vares?)\b/ig, '').replace(/\$/g, '').trim(), amount = parseAmount(amtText);
+    if (!(amount > 0)) return { raw: text, error: 'No pude interpretar el monto. Escríbelo como 5,50 o 5.50.' };
+    var currency = /\$|usd|us\$|dolares?/.test(normalized) ? 'USD' : /\bbs\b|bolivares?/.test(normalized) ? 'VES' : S.displayCurrency;
+    var type = /\b(ingreso|cobre|cobre|cobre|recibi|sueldo|salario|freelance|venta|me pagaron|cobro|abono recibido)\b/.test(normalized) ? 'income' : 'expense';
+    var account = S.accounts.filter(function (a) { var n = normWords(a.name); return n && normalized.indexOf(n) >= 0 && a.currency === currency; })[0];
+    if (!account && /\bbinance\b/.test(normalized)) account = S.accounts.filter(function (a) { return /binance/i.test(a.name) && a.currency === currency; })[0];
+    // Si la persona escribe solo "efectivo", prioriza la cuenta de efectivo de la moneda elegida.
+    if (!account && /\befectivo\b/.test(normalized)) account = S.accounts.filter(function (a) { return /efectivo/i.test(a.name) && a.currency === currency; })[0];
+    if (!account) account = accById(defaultAccount(currency));
+    if (!account) return { raw: text, error: 'No tienes una cuenta en ' + (currency === 'USD' ? 'dólares' : 'bolívares') + '. Crea una en Más › Cuentas.' };
+    var cats = S.categories.filter(function (c) { return c.kind === type; }), keywords = { 'alimentacion': ['almuerzo','desayuno','cena','comida','restaurante','mercado','supermercado','cafe'], 'transporte': ['taxi','uber','gasolina','metro','bus','autobus','pasaje'], 'vivienda': ['alquiler','renta'], 'servicios': ['internet','luz','agua','telefono'], 'entretenimiento': ['cine','juego','salida'], 'salud': ['farmacia','medicina','doctor'], 'compras': ['ropa','zapatos'], 'freelance': ['freelance','cliente','proyecto'], 'sueldo': ['sueldo','salario'] };
+    var category = cats.filter(function (c) { var cn = normWords(c.name); if (normalized.indexOf(cn) >= 0) return true; var keys = keywords[cn] || []; return keys.some(function (k) { return normalized.indexOf(k) >= 0; }); })[0] || catsFor(type)[0];
+    if (!category) return { raw: text, error: 'No tienes categorías de ' + (type === 'income' ? 'ingresos' : 'gastos') + '.' };
+    var note = text.replace(hit[0], ' ').replace(new RegExp(account.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), ' ').replace(/\b(?:usd|us\$|bs\.?|bol[ií]vares?|dolares?|dolar|efectivo|banco\s*\d+|ingreso|cobre|cobré|recibi|recibí|me pagaron)\b/ig, ' ').replace(/[$]/g, ' ').replace(/\s+/g, ' ').trim();
+    note = note ? note.charAt(0).toLocaleUpperCase('es-VE') + note.slice(1) : category.name;
+    return { raw: text, amountMinor: amount, currency: currency, type: type, account: account, category: category, note: note.slice(0, 120), rateE4: S.rate.rateE4, error: (!S.rate.rateE4 ? 'Primero define la tasa del dólar en Más › Tasas; la app guarda la tasa aplicada a cada movimiento.' : null) };
+  }
+  async function saveQuickEntry() {
+    var raw = document.getElementById('quick-text') ? document.getElementById('quick-text').value : quickParsed && quickParsed.raw;
+    var parsed = parseQuickEntry(raw); quickParsed = parsed;
+    if (parsed.error) { render(); return; }
+    var now = new Date().toISOString(), tx = { id: uuid(), type: parsed.type, amountMinor: parsed.amountMinor, currency: parsed.currency, rateE4: parsed.rateE4 || S.rate.rateE4, categoryId: parsed.category.id, accountId: parsed.account.id, note: parsed.note, dateISO: today(), createdAt: now, updatedAt: now, split: null, receiptImage: '' };
+    var ok = await act(async function () { await B.saveTx(tx); S.transactions.push(tx); persist(); });
+    if (ok) { quickParsed = null; toast('Movimiento guardado'); tab = 'moves'; sub = 'menu'; render(); }
+  }
+  function viewTransfers() {
+    var accounts = S.accounts, opts = accounts.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + ' (' + (a.currency === 'USD' ? '$' : 'Bs') + ')</option>'; }).join('');
+    var h = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Transferencias</h1>' + banners() + '<div class="card"><div class="label">Mover dinero entre cuentas</div><div class="muted">Una transferencia no es ingreso ni gasto. Si las monedas son distintas, indica cuánto sale de una cuenta y cuánto llega a la otra.</div>' +
+      '<div class="field"><label class="label" for="tr-from">Desde</label><select id="tr-from">' + opts + '</select></div><div class="field"><label class="label" for="tr-to">Hacia</label><select id="tr-to">' + opts + '</select></div>' +
+      '<div class="field"><label class="label" for="tr-fromamount">Monto que sale</label><input id="tr-fromamount" inputmode="decimal" placeholder="0,00"></div><div class="field"><label class="label" for="tr-toamount">Monto que llega (solo si cambia la moneda)</label><input id="tr-toamount" inputmode="decimal" placeholder="Déjalo vacío si es la misma moneda"></div>' +
+      '<div class="field"><label class="label" for="tr-date">Fecha</label><input id="tr-date" type="date" value="' + today() + '"></div><div class="field"><label class="label" for="tr-note">Nota (opcional)</label><input id="tr-note" maxlength="120" placeholder="Ej. Pasé dinero a efectivo"></div><button class="btn" data-a="save-transfer">Guardar transferencia</button></div>';
+    var ts = (S.transfers || []).slice().sort(function (a, b) { return b.dateISO.localeCompare(a.dateISO); });
+    h += '<div class="label">Historial</div>' + (ts.length ? ts.map(function (t) { var fa = accById(t.fromAccountId), ta = accById(t.toAccountId); return '<div class="card"><div class="row"><div class="col"><b>' + esc(fa ? fa.name : 'Cuenta eliminada') + ' → ' + esc(ta ? ta.name : 'Cuenta eliminada') + '</b><span class="muted">' + esc(t.dateISO) + (t.note ? ' · ' + esc(t.note) : '') + '</span></div><button class="linkbtn" data-a="delete-transfer" data-id="' + esc(t.id) + '">Eliminar</button></div><div class="row"><span>' + esc(fmt(t.fromAmountMinor, t.fromCurrency)) + ' → ' + esc(fmt(t.toAmountMinor, t.toCurrency)) + '</span></div></div>'; }).join('') : '<div class="empty"><b>Aún no hay transferencias</b></div>');
+    return h;
+  }
+  async function saveTransferClick() {
+    if (offline) { toast('Sin conexión: por ahora solo puedes mirar tus datos.'); return; }
+    var from = accById(document.getElementById('tr-from').value), to = accById(document.getElementById('tr-to').value), fromAmount = parseAmount(document.getElementById('tr-fromamount').value), toRaw = document.getElementById('tr-toamount').value.trim(), toAmount = toRaw ? parseAmount(toRaw) : fromAmount, date = document.getElementById('tr-date').value, note = document.getElementById('tr-note').value.trim();
+    if (!from || !to || from.id === to.id) { toast('Elige dos cuentas distintas.'); return; }
+    if (!(fromAmount > 0) || !(toAmount > 0) || fromAmount > 1e13 || toAmount > 1e13) { toast('Escribe montos mayores que cero y dentro del límite permitido.'); return; }
+    if (!validDate(date)) { toast('Revisa la fecha de la transferencia.'); return; }
+    if (from.currency === to.currency && toAmount !== fromAmount) { toast('Si las cuentas usan la misma moneda, los montos deben coincidir.'); return; }
+    if (from.currency !== to.currency && !toRaw) { toast('Escribe el monto que llega a la cuenta cuando cambia la moneda.'); return; }
+    if (from.currency !== to.currency && !(S.rate.rateE4 > 0)) { toast('Define la tasa del dólar antes de registrar una transferencia entre monedas.'); return; }
+    var t = { id: uuid(), fromAccountId: from.id, toAccountId: to.id, fromAmountMinor: fromAmount, toAmountMinor: toAmount, fromCurrency: from.currency, toCurrency: to.currency, rateE4: S.rate.rateE4, dateISO: date, note: note.slice(0, 120), createdAt: new Date().toISOString() };
+    var ok = await act(async function () { await B.saveTransfer(t); S.transfers.push(t); persist(); });
+    if (ok) { toast('Transferencia guardada sin alterar los reportes de ingresos y gastos'); render(); }
+  }
+  function viewGoals() {
+    var h = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Metas de ahorro</h1>' + banners() + '<div class="card"><div class="label">Nueva meta</div><div class="field"><label class="label" for="goal-name">Nombre</label><input id="goal-name" maxlength="60" placeholder="Ej. Equipo de trabajo"></div><div class="field"><label class="label" for="goal-target">Monto objetivo</label><input id="goal-target" inputmode="decimal" placeholder="200,00"></div><div class="field"><label class="label" for="goal-saved">Ya ahorrado</label><input id="goal-saved" inputmode="decimal" value="0"></div><div class="field"><label class="label" for="goal-currency">Moneda</label><select id="goal-currency"><option value="USD">Dólares</option><option value="VES">Bolívares</option></select></div><div class="field"><label class="label" for="goal-due">Fecha objetivo (opcional)</label><input id="goal-due" type="date"></div><div class="field"><label class="label" for="goal-note">Nota (opcional)</label><input id="goal-note" maxlength="120"></div><button class="btn" data-a="save-goal">Crear meta</button></div>';
+    if (!(S.goals || []).length) return h + '<div class="empty"><b>Empieza con una meta pequeña</b><span class="muted">El progreso se actualiza manualmente; no mueve dinero entre cuentas.</span></div>';
+    h += '<div class="label">Tus metas</div>' + S.goals.map(function (g) { var pct = g.targetMinor > 0 ? Math.min(100, Math.round(g.savedMinor / g.targetMinor * 100)) : 0; return '<div class="card"><div class="row"><b>' + esc(g.name) + '</b><button class="linkbtn" data-a="delete-goal" data-id="' + esc(g.id) + '">Eliminar</button></div><div class="row"><span class="num">' + fmt(g.savedMinor, g.currency) + ' / ' + fmt(g.targetMinor, g.currency) + '</span><b>' + pct + '%</b></div><div class="bar"><i style="width:' + pct + '%"></i></div>' + (g.dueDate ? '<div class="muted">Objetivo: ' + esc(g.dueDate) + '</div>' : '') + '<div class="field"><label class="label" for="goal-progress-' + esc(g.id) + '">Monto acumulado actual</label><input id="goal-progress-' + esc(g.id) + '" inputmode="decimal" value="' + esc(minorToText(g.savedMinor)) + '"></div><button class="btn quiet" data-a="goal-progress" data-id="' + esc(g.id) + '">Actualizar progreso</button></div>'; }).join('');
+    h += '<div class="muted">Las metas son un seguimiento, no una cuenta bancaria separada. Registra también los movimientos reales para que el saldo de tus cuentas siga correcto.</div>'; return h;
+  }
+  async function saveGoalClick() {
+    var name = document.getElementById('goal-name').value.trim(), target = parseAmount(document.getElementById('goal-target').value), saved = parseAmount(document.getElementById('goal-saved').value || '0'), due = document.getElementById('goal-due').value, note = document.getElementById('goal-note').value.trim();
+    if (!name) { toast('Ponle un nombre a la meta.'); return; }
+    if (!(target > 0) || target > 1e13 || saved === null || saved < 0 || saved > target) { toast('Revisa los montos de la meta; el objetivo debe ser válido y lo ahorrado debe estar entre cero y el objetivo.'); return; }
+    if (due && !validDate(due)) { toast('Revisa la fecha objetivo.'); return; }
+    var g = { id: uuid(), name: name.slice(0, 60), targetMinor: target, savedMinor: saved, currency: document.getElementById('goal-currency').value === 'VES' ? 'VES' : 'USD', dueDate: due, note: note.slice(0, 120), createdAt: new Date().toISOString() };
+    var ok = await act(async function () { await B.saveGoal(g); S.goals.push(g); persist(); }); if (ok) { toast('Meta creada'); render(); }
+  }
+  async function updateGoalProgress(id) {
+    var g = (S.goals || []).filter(function (x) { return x.id === id; })[0]; if (!g) return;
+    var inp = document.getElementById('goal-progress-' + id), n = inp ? parseAmount(inp.value) : null;
+    if (n === null || n < 0 || n > g.targetMinor) { toast('El progreso debe estar entre cero y el monto objetivo.'); return; }
+    var updated = Object.assign({}, g, { savedMinor: n }); var ok = await act(async function () { await B.saveGoal(updated); S.goals = S.goals.map(function (x) { return x.id === id ? updated : x; }); persist(); }); if (ok) { toast('Progreso actualizado'); render(); }
+  }
+  function viewAllocation() {
+    var a = S.allocation || { invest: 10, enjoyment: 20, savings: 20, emergency: 10, needs: 40 }, income = monthSummary(today().slice(0, 7), S.displayCurrency).inc;
+    var fields = [['invest','Inversión'],['enjoyment','Disfrutar'],['savings','Ahorro'],['emergency','Emergencias'],['needs','Necesidades']];
+    return '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Distribución del ingreso</h1>' + banners() + '<div class="card"><div class="label">Reparte cada ingreso como prefieras</div><div class="muted">Los porcentajes deben sumar 100 %. Cuadre calcula una sugerencia por cada destino; no mueve automáticamente dinero entre cuentas ni crea gastos.</div>' + fields.map(function (x) { var k = ({invest:'invest',enjoyment:'enjoyment',savings:'savings',emergency:'emergency',needs:'needs'})[x[0]]; return '<div class="field"><label class="label" for="alloc-' + x[0] + '">' + x[1] + ' (%)</label><input id="alloc-' + x[0] + '" inputmode="numeric" value="' + esc(a[k]) + '"></div><div class="muted">Estimación este mes: ' + fmt(Math.round(income * a[k] / 100), S.displayCurrency) + '</div>'; }).join('') + '<div class="muted">Ingresos registrados este mes: ' + fmt(income, S.displayCurrency) + '</div><button class="btn" data-a="save-allocation">Guardar porcentajes</button></div>';
+  }
+  async function saveAllocationClick() {
+    var a = { invest: Number(document.getElementById('alloc-invest').value), enjoyment: Number(document.getElementById('alloc-enjoyment').value), savings: Number(document.getElementById('alloc-savings').value), emergency: Number(document.getElementById('alloc-emergency').value), needs: Number(document.getElementById('alloc-needs').value) };
+    var vals = Object.keys(a).map(function (k) { return a[k]; }); if (vals.some(function (n) { return !Number.isInteger(n) || n < 0 || n > 100; }) || vals.reduce(function (n, x) { return n + x; }, 0) !== 100) { toast('Los porcentajes deben ser números enteros entre 0 y 100 que sumen exactamente 100 %.'); return; }
+    var ok = await act(async function () { await B.saveAllocation(a); S.allocation = a; persist(); }); if (ok) { toast('Distribución guardada'); render(); }
+  }
+
   function viewMore() {
     if (sub === 'menu') {
       var r = S.rate.rateE4;
@@ -800,6 +1000,11 @@
         ['accounts', '🏦', 'Cuentas', S.accounts.length + ' cuentas'],
         ['cats', '🏷️', 'Categorías', S.categories.length + ' categorías'],
         ['budgets', '🎯', 'Presupuestos', S.budgets.length ? S.budgets.length + (S.budgets.length === 1 ? ' activo' : ' activos') : 'Pon límites por categoría'],
+        ['reports', '📊', 'Reportes', 'Gráficos y exportar PDF / Excel'],
+        ['quick', '⚡', 'Entrada rápida', 'Escribe un gasto o ingreso en una frase'],
+        ['transfers', '🔄', 'Transferencias', (S.transfers || []).length + ' transferencias entre cuentas'],
+        ['goals', '🎯', 'Metas de ahorro', (S.goals || []).length + ' metas activas'],
+        ['allocation', '🪙', 'Distribución del ingreso', 'Porcentajes para organizar tu dinero'],
         ['rate', '💱', 'Tasas', r > 0 ? 'Dólar BCV: Bs ' + fmtRate(r) : 'Sin definir'],
         ['remind', '🔔', 'Avisos', S.prefs.remindDays + (S.prefs.remindDays === 1 ? ' día antes' : ' días antes')],
         ['theme', '🌗', 'Apariencia', { light: 'Claro', dark: 'Oscuro', system: 'Como el dispositivo' }[readTheme()]],
@@ -814,12 +1019,17 @@
         return '<button class="link" data-a="sub" data-v="' + i[0] + '"><span class="e" aria-hidden="true">' + i[1] + '</span><span class="col"><b>' + i[2] + '</b><span class="muted">' + i[3] + '</span></span><span class="chev" aria-hidden="true">›</span></button>';
       }).join('');
       if (CLOUD && user) h += '<button class="btn quiet" data-a="logout">Cerrar sesión</button>';
-      return h + '<div class="muted">Cuadre v0.3 · ' + (CLOUD ? 'tus datos están en la nube.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
+      return h + '<div class="muted">Cuadre v0.4 · ' + (CLOUD ? 'tus datos están en la nube.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
     }
     var back = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button>';
     if (sub === 'budgets') return viewBudgets();
     if (sub === 'remind') return viewRemind();
     if (sub === 'f-bud') return viewForm();
+    if (sub === 'reports') return viewReports();
+    if (sub === 'quick') return viewQuickEntry();
+    if (sub === 'transfers') return viewTransfers();
+    if (sub === 'goals') return viewGoals();
+    if (sub === 'allocation') return viewAllocation();
     if (sub === 'accounts') {
       var ha = back + '<h1 class="h2">Cuentas</h1>' + banners() + '<div class="muted">Toca una cuenta para cambiarle el nombre o ponerle un logo.</div>';
       S.accounts.forEach(function (a) {
@@ -934,19 +1144,37 @@
   /* ---------- 10. Pantalla de acceso (modo nube) ---------- */
   function renderAuth() {
     $navwrap.hidden = true; sheet = null; renderSheet();
-    var signup = authMode === 'signup';
+    var signup = authMode === 'signup', resetMode = authMode === 'reset', updateMode = authMode === 'updatePassword';
+    var heading = signup ? 'Crea tu cuenta para guardar tus finanzas en la nube y usarlas desde cualquier dispositivo.' : resetMode ? 'Te enviaremos un enlace para recuperar el acceso.' : updateMode ? 'Elige una contraseña nueva para tu cuenta.' : 'Inicia sesión para ver tus finanzas.';
     $app.innerHTML = '<div class="auth"><div class="brand">Cuadre</div>' +
-      '<div class="muted">' + (signup ? 'Crea tu cuenta para guardar tus finanzas en la nube y usarlas desde cualquier dispositivo.' : 'Inicia sesión para ver tus finanzas.') + '</div>' +
+      '<div class="muted">' + heading + '</div>' +
       '<form id="authform" novalidate>' +
       (signup ? '<div class="field"><label class="label" for="un">Usuario</label><input id="un" maxlength="20" autocomplete="username" autocapitalize="none" placeholder="ej. daniela_14" value="' + esc(authDraft.username) + '" required></div>' : '') +
-      '<div class="field"><label class="label" for="em">Correo</label><input id="em" type="email" autocomplete="email" inputmode="email" autocapitalize="none" value="' + esc(authDraft.email) + '" required></div>' +
-      '<div class="field"><label class="label" for="pw">Contraseña</label><input id="pw" type="password" autocomplete="' + (signup ? 'new-password' : 'current-password') + '" minlength="' + (signup ? 8 : 6) + '" required></div>' +
-      (signup ? '<div class="field"><label class="label" for="pw2">Confirmar contraseña</label><input id="pw2" type="password" autocomplete="new-password" required></div><div class="muted">Mínimo 8 caracteres.</div>' : '') +
+      (!updateMode ? '<div class="field"><label class="label" for="em">Correo</label><input id="em" type="email" autocomplete="email" inputmode="email" autocapitalize="none" value="' + esc(authDraft.email) + '" required></div>' : '') +
+      (!resetMode ? '<div class="field"><label class="label" for="pw">' + (updateMode ? 'Nueva contraseña' : 'Contraseña') + '</label><input id="pw" type="password" autocomplete="' + (signup || updateMode ? 'new-password' : 'current-password') + '" minlength="' + (signup || updateMode ? 8 : 6) + '" required></div>' : '') +
+      ((signup || updateMode) ? '<div class="field"><label class="label" for="pw2">Confirmar contraseña</label><input id="pw2" type="password" autocomplete="new-password" required></div><div class="muted">Mínimo 8 caracteres.</div>' : '') +
       (authMsg ? '<div class="' + (authMsg.ok ? 'muted' : 'err') + '" role="alert">' + esc(authMsg.text) + '</div>' : '') +
-      '<button class="btn" type="submit"' + (authBusy ? ' disabled' : '') + '>' + (authBusy ? 'Un momento…' : signup ? 'Crear cuenta' : 'Entrar') + '</button></form>' +
-      '<button class="switch" data-a="auth-switch">' + (signup ? 'Ya tengo cuenta · Entrar' : 'No tengo cuenta · Crear una') + '</button></div>';
+      '<button class="btn" type="submit"' + (authBusy ? ' disabled' : '') + '>' + (authBusy ? 'Un momento…' : signup ? 'Crear cuenta' : resetMode ? 'Enviar enlace' : updateMode ? 'Guardar nueva contraseña' : 'Entrar') + '</button></form>' +
+      (!updateMode ? '<button class="switch" data-a="auth-switch">' + (signup ? 'Ya tengo cuenta · Entrar' : resetMode ? 'Volver a iniciar sesión' : 'No tengo cuenta · Crear una') + '</button>' : '') +
+      (!signup && !resetMode && !updateMode ? '<button class="switch" data-a="forgot-password">Olvidé mi contraseña</button>' : '') + '</div>';
   }
   async function submitAuth() {
+    if (authMode === 'reset') {
+      var resetEmail = (document.getElementById('em') ? document.getElementById('em').value : '').trim();
+      if (!resetEmail) { authMsg = { ok: false, text: 'Escribe el correo de tu cuenta.' }; renderAuth(); return; }
+      authBusy = true; authMsg = null; renderAuth();
+      try { check(await sb.auth.resetPasswordForEmail(resetEmail, { redirectTo: location.origin + location.pathname })); authBusy = false; authMsg = { ok: true, text: 'Si el correo existe, recibirás un enlace para cambiar la contraseña. Revisa también spam.' }; renderAuth(); }
+      catch (e) { authBusy = false; authMsg = { ok: false, text: humanError(e) }; renderAuth(); }
+      return;
+    }
+    if (authMode === 'updatePassword') {
+      var newPw = document.getElementById('pw').value, newPw2 = document.getElementById('pw2').value;
+      if (newPw.length < 8 || newPw !== newPw2) { authMsg = { ok: false, text: newPw.length < 8 ? 'La contraseña debe tener al menos 8 caracteres.' : 'Las contraseñas no coinciden.' }; renderAuth(); return; }
+      authBusy = true; authMsg = null; renderAuth();
+      try { check(await sb.auth.updateUser({ password: newPw })); authBusy = false; authMsg = null; authMode = 'login'; await startApp(); toast('Contraseña actualizada.'); }
+      catch (e) { authBusy = false; authMsg = { ok: false, text: humanError(e) }; authMode = 'updatePassword'; renderAuth(); }
+      return;
+    }
     var email = document.getElementById('em').value.trim(), pw = document.getElementById('pw').value;
     var signupMode = authMode === 'signup', un = signupMode ? normUser(document.getElementById('un').value) : '', pw2 = signupMode ? document.getElementById('pw2').value : '';
     authDraft.email = email; if (signupMode) authDraft.username = un;
@@ -997,10 +1225,10 @@
     var d = today();
     sheet = t ? {
       id: t.id, type: t.type, currency: t.currency, amountText: minorToText(t.amountMinor), categoryId: t.categoryId, accountId: t.accountId,
-      dateMode: t.dateISO === d ? 'today' : t.dateISO === addDays(d, -1) ? 'yesterday' : 'other', customDate: t.dateISO, note: t.note, errors: {}, confirmDelete: false, saving: false, pay: null, split: t.split ? { people: t.split.map(function (x) { return { name: x.name, share: minorToText(x.shareMinor), settled: !!x.settled }; }) } : null
+      dateMode: t.dateISO === d ? 'today' : t.dateISO === addDays(d, -1) ? 'yesterday' : 'other', customDate: t.dateISO, note: t.note, receiptImage: safeImg(t.receiptImage), errors: {}, confirmDelete: false, saving: false, pay: null, split: t.split ? { people: t.split.map(function (x) { return { name: x.name, share: minorToText(x.shareMinor), settled: !!x.settled }; }) } : null
     } : {
       id: null, type: 'expense', currency: S.displayCurrency, amountText: '', categoryId: (catsFor('expense')[0] || {}).id || null,
-      accountId: defaultAccount(S.displayCurrency), dateMode: 'today', customDate: d, note: '', errors: {}, confirmDelete: false, saving: false, pay: null, split: null
+      accountId: defaultAccount(S.displayCurrency), dateMode: 'today', customDate: d, note: '', receiptImage: '', errors: {}, confirmDelete: false, saving: false, pay: null, split: null
     };
     renderSheet(!t);
   }
@@ -1025,8 +1253,9 @@
       (s.dateMode === 'other' ? '<div class="field"><input id="cd" data-f="customDate" placeholder="AAAA-MM-DD" aria-label="Fecha en formato año-mes-día" value="' + esc(s.customDate) + '"' + (e.date ? ' aria-invalid="true"' : '') + '></div>' : '') +
       (e.date ? '<div class="err">' + esc(e.date) + '</div>' : '') + '</div>' +
       '<div class="field"><label class="label" for="nt">Nota (opcional)</label><input id="nt" data-f="note" maxlength="120" placeholder="Ej. Almuerzo" autocomplete="off" value="' + esc(s.note) + '"></div>' +
+      '<div class="card"><div class="label">Foto del recibo (opcional)</div><label class="btn quiet small" for="receiptfile">' + (s.receiptImage ? 'Cambiar foto' : 'Adjuntar foto') + '</label><input id="receiptfile" class="file" type="file" accept="image/*">' + (s.receiptImage ? '<img class="receipt-preview" alt="Vista previa del recibo" src="' + s.receiptImage + '"><button class="linkbtn" data-a="remove-receipt">Quitar recibo</button>' : '<div class="muted">Se comprime para ocupar menos espacio.</div>') + '</div>' +
       '<button class="btn" data-a="save-tx"' + (s.saving ? ' disabled' : '') + '>' + (s.saving ? 'Guardando…' : s.id ? 'Guardar cambios' : 'Listo') + '</button>' +
-      (s.id ? (s.confirmDelete ? slideHtml('tx', s.id, '') : '<button class="btn danger" data-a="del-tx"' + (s.saving ? ' disabled' : '') + '>Eliminar movimiento</button>') : '') +
+      (s.id ? '<button class="btn quiet" data-a="repeat-tx"' + (s.saving ? ' disabled' : '') + '>Repetir como nuevo movimiento</button>' + (s.confirmDelete ? slideHtml('tx', s.id, '') : '<button class="btn danger" data-a="del-tx"' + (s.saving ? ' disabled' : '') + '>Eliminar movimiento</button>') : '') +
       '</div></div>';
     if (focusAmount) { var el = document.getElementById('amt'); if (el) el.focus(); }
   }
@@ -1056,7 +1285,7 @@
     if (Object.keys(err).length) { s.errors = err; renderSheet(false); return; }
     var now = new Date().toISOString();
     var tx = { id: existing ? existing.id : uuid(), type: s.type, amountMinor: a, currency: s.currency, rateE4: rate, categoryId: s.categoryId,
-      accountId: s.accountId, note: s.note.trim().slice(0, 120), dateISO: dateISO, createdAt: existing ? existing.createdAt : now, updatedAt: now, split: splitArr };
+      accountId: s.accountId, note: s.note.trim().slice(0, 120), dateISO: dateISO, createdAt: existing ? existing.createdAt : now, updatedAt: now, split: splitArr, receiptImage: safeImg(s.receiptImage) };
     s.saving = true; renderSheet(false);
     var ok = await act(async function () {
       await B.saveTx(tx);
@@ -1101,6 +1330,7 @@
       var ok = await act(async function () {
         if (CLOUD) check(await sb.rpc('delete_account', { p_id: id }));
         S.transactions = S.transactions.filter(function (t) { return t.accountId !== id; });
+        S.transfers = (S.transfers || []).filter(function (t) { return t.fromAccountId !== id && t.toAccountId !== id; });
         S.accounts = S.accounts.filter(function (x) { return x.id !== id; });
         S.scheduled.forEach(function (x) { if (x.accountId === id) x.accountId = null; }); S.plans.forEach(function (x) { if (x.accountId === id) x.accountId = null; });
         persist();
@@ -1285,6 +1515,22 @@
   }
 
   async function handleExtra(a, el, id, v) {
+    if (a === 'refresh-report') { render(); return true; }
+    if (a === 'export-xlsx') { exportExcel(); return true; }
+    if (a === 'export-pdf') { exportPdf(); return true; }
+    if (a === 'quick-parse') { quickParsed = parseQuickEntry(document.getElementById('quick-text') ? document.getElementById('quick-text').value : ''); render(); return true; }
+    if (a === 'quick-save') { await saveQuickEntry(); return true; }
+    if (a === 'save-transfer') { await saveTransferClick(); return true; }
+    if (a === 'delete-transfer') {
+      var tr = (S.transfers || []).filter(function (x) { return x.id === id; })[0]; if (!tr) return true;
+      var tdOk = await act(async function () { await B.removeTransfer(id); S.transfers = S.transfers.filter(function (x) { return x.id !== id; }); persist(); }); if (tdOk) { toast('Transferencia eliminada'); render(); } return true;
+    }
+    if (a === 'save-goal') { await saveGoalClick(); return true; }
+    if (a === 'delete-goal') {
+      var tgOk = await act(async function () { await B.removeGoal(id); S.goals = (S.goals || []).filter(function (x) { return x.id !== id; }); persist(); }); if (tgOk) { toast('Meta eliminada'); render(); } return true;
+    }
+    if (a === 'goal-progress') { await updateGoalProgress(id); return true; }
+    if (a === 'save-allocation') { await saveAllocationClick(); return true; }
     if (a === 'ptab') { ptab = v; render(); return true; }
     if (a === 'goto-pay') { tab = 'pay'; sub = 'menu'; arm = null; fd = null; render(); window.scrollTo(0, 0); return true; }
     if (a === 'new-sch') { openForm('sch'); return true; }
@@ -1374,7 +1620,9 @@
   }
   async function applyRate(rate) {
     await B.saveRate(rate);
-    S.rate = rate; persist();
+    S.rate = rate; S.rateHistory = S.rateHistory || [];
+    if (!S.rateHistory.some(function (x) { return x.rateE4 === rate.rateE4 && x.recordedAt === rate.updatedAt; })) S.rateHistory.push({ rateE4: rate.rateE4, source: rate.source || 'manual', recordedAt: rate.updatedAt || new Date().toISOString() });
+    persist();
   }
   async function fetchRateClick() {
     if (offline) { toast('Sin conexión: por ahora solo puedes mirar tus datos.'); return; }
@@ -1454,7 +1702,10 @@
       if (await handleExtra(a, el, id, v)) return;
       if (a === 'close-scrim') { if (ev.target === el) { sheet = null; renderSheet(); } return; }
       if (a === 'close') { sheet = null; renderSheet(); return; }
-      if (a === 'auth-switch') { authMode = authMode === 'login' ? 'signup' : 'login'; authMsg = null; renderAuth(); return; }
+      if (a === 'auth-switch') { authMode = (authMode === 'signup' || authMode === 'reset') ? 'login' : 'signup'; authMsg = null; renderAuth(); return; }
+      if (a === 'forgot-password') { authMode = 'reset'; authMsg = null; renderAuth(); return; }
+      if (a === 'remove-receipt') { if (sheet) { sheet.receiptImage = ''; renderSheet(false); } return; }
+      if (a === 'repeat-tx') { if (sheet) { var oldSheet = sheet; sheet = Object.assign({}, oldSheet, { id: null, dateMode: 'today', customDate: today(), receiptImage: '', errors: {}, confirmDelete: false, saving: false, pay: null }); renderSheet(false); toast('Movimiento listo para repetir. Revisa el monto y guárdalo.'); } return; }
       if (a === 'tab') { arm = null; fd = null; tab = v; sub = 'menu'; msg = null; topMsg = null; render(); window.scrollTo(0, 0); return; }
       if (a === 'goto-profile') { tab = 'more'; sub = 'profile'; msg = null; startProfileDraft(); render(); window.scrollTo(0, 0); return; }
       if (a === 'goto-rate') { tab = 'more'; sub = 'rate'; msg = null; render(); window.scrollTo(0, 0); return; }
@@ -1560,9 +1811,14 @@
       } else if (t.id === 'avfile' && profDraft) {
         profDraft.avatar = safeImg(await imageToDataUrl(f, 256, 'image/jpeg', 0.85)); msg = profDraft.avatar ? null : 'No se pudo usar esa imagen.'; msgOk = false;
         render();
+      } else if (t.id === 'receiptfile' && sheet) {
+        var receipt = safeImg(await imageBoundedDataUrl(f, 1000, 'image/jpeg', 0.62));
+        if (!receipt || receipt.length > 240000) throw new Error('receipt-size');
+        sheet.receiptImage = receipt; renderSheet(false);
       }
     } catch (e) {
       if (t.id === 'logofile' && editAcc) editAcc.msg = 'No se pudo leer esa imagen. Prueba con otra (JPG o PNG).';
+      else if (t.id === 'receiptfile' && sheet) { toast((e && e.message) === 'receipt-size' ? 'El recibo es demasiado pesado. Prueba una foto más pequeña.' : 'No se pudo leer el recibo. Prueba con otra imagen.'); renderSheet(false); }
       else { msg = 'No se pudo leer esa imagen. Prueba con otra (JPG o PNG).'; msgOk = false; }
       render();
     }
@@ -1631,11 +1887,13 @@
     if (!window.supabase) { renderFatal('No se pudo cargar Supabase. Revisa tu conexión a internet.', true); return; }
     sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
     var session = null;
+    var recoveryLink = /type=recovery/i.test(String(location.hash || '') + '&' + String(location.search || ''));
     try { session = check(await sb.auth.getSession()).data.session; } catch (e) { session = null; }
-    sb.auth.onAuthStateChange(function (event) {
+    sb.auth.onAuthStateChange(function (event, sessionInfo) {
+      if (event === 'PASSWORD_RECOVERY') { user = sessionInfo && sessionInfo.user ? sessionInfo.user : null; authMode = 'updatePassword'; authMsg = null; renderAuth(); return; }
       if (event === 'SIGNED_OUT' && user) { user = null; S = null; authMode = 'login'; renderAuth(); }
     });
-    if (session) { user = session.user; await startApp(); } else renderAuth();
+    if (session) { user = session.user; if (recoveryLink) { authMode = 'updatePassword'; authMsg = null; renderAuth(); } else await startApp(); } else renderAuth();
   }
   // Se expone solo lo necesario para las pruebas automáticas.
   window.__cuadre = { parseAmount: parseAmount, parseRate: parseRate, fmt: fmt, fmtRate: fmtRate, convert: convert };
