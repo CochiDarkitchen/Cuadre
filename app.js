@@ -119,6 +119,7 @@
     if (/Failed to fetch|NetworkError|Load failed|network|fetch/i.test(m)) return 'Sin conexión. Inténtalo de nuevo cuando tengas internet.';
     if (/Invalid login credentials/i.test(m)) return 'Correo o contraseña incorrectos.';
     if (/Email not confirmed/i.test(m)) return 'Primero confirma tu correo: revisa tu bandeja de entrada.';
+    if (/otp_expired|expired.*(token|otp|code)|invalid.*(token|otp|code)|token.*(expired|invalid)|code.*(expired|invalid)/i.test(m)) return 'El código no es válido o ha caducado. Solicita uno nuevo y vuelve a intentarlo.';
     if (/already registered|already been registered/i.test(m)) return 'Ese correo ya tiene una cuenta. Prueba iniciar sesión.';
     if (/at least \d+ characters|weak/i.test(m)) return 'La contraseña es muy corta: usa al menos 6 caracteres.';
     if (/valid email|invalid format/i.test(m)) return 'Escribe un correo válido.';
@@ -1443,7 +1444,7 @@
       }).join('');
       if (CLOUD && user) h += '<button class="btn quiet" data-a="logout">Cerrar sesión</button>';
       h += '<div class="card privacy-note"><b>Estado de tus datos</b>' + syncStatusHtml() + '<div class="muted">Haz copias JSON periódicas y guárdalas fuera de este dispositivo. Una copia en el navegador no reemplaza un respaldo externo.</div></div>';
-      return h + '<div class="muted">Cuadre v0.8 Welcome Edition · ' + (demoMode ? 'demostración aislada.' : CLOUD ? 'tus datos sincronizan con la nube cuando la conexión está disponible.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
+      return h + '<div class="muted">Cuadre v0.9 Recovery Code Edition · ' + (demoMode ? 'demostración aislada.' : CLOUD ? 'tus datos sincronizan con la nube cuando la conexión está disponible.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
     }
     var back = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button>';
     if (sub === 'help') return viewHelp();
@@ -1700,28 +1701,51 @@
   function renderAuth() {
     quickActionsOpen = false; renderQuickActions();
     $navwrap.hidden = true; sheet = null; renderSheet();
-    var signup = authMode === 'signup', resetMode = authMode === 'reset', updateMode = authMode === 'updatePassword';
-    var heading = signup ? 'Crea tu cuenta para guardar tus finanzas en la nube y usarlas desde cualquier dispositivo.' : resetMode ? 'Te enviaremos un enlace para recuperar el acceso.' : updateMode ? 'Elige una contraseña nueva para tu cuenta.' : 'Inicia sesión para ver tus finanzas.';
+    var signup = authMode === 'signup', resetMode = authMode === 'reset', codeMode = authMode === 'resetCode', updateMode = authMode === 'updatePassword';
+    var heading = signup ? 'Crea tu cuenta para guardar tus finanzas en la nube y usarlas desde cualquier dispositivo.' : resetMode ? 'Te enviaremos un código de verificación por correo.' : codeMode ? 'Escribe el código que recibiste por correo para verificar tu identidad.' : updateMode ? 'Elige una contraseña nueva para tu cuenta.' : 'Inicia sesión para ver tus finanzas.';
     $app.innerHTML = '<div class="auth"><div class="brand">Cuadre</div>' +
       '<div class="muted">' + heading + '</div>' +
       '<form id="authform" novalidate>' +
       (signup ? '<div class="field"><label class="label" for="un">Usuario</label><input id="un" maxlength="20" autocomplete="username" autocapitalize="none" placeholder="ej. daniela_14" value="' + esc(authDraft.username) + '" required></div>' : '') +
-      (!updateMode ? '<div class="field"><label class="label" for="em">Correo</label><input id="em" type="email" autocomplete="email" inputmode="email" autocapitalize="none" value="' + esc(authDraft.email) + '" required></div>' : '') +
-      (!resetMode ? '<div class="field"><label class="label" for="pw">' + (updateMode ? 'Nueva contraseña' : 'Contraseña') + '</label><input id="pw" type="password" autocomplete="' + (signup || updateMode ? 'new-password' : 'current-password') + '" minlength="' + (signup || updateMode ? 8 : 6) + '" required></div>' : '') +
+      (!updateMode ? '<div class="field"><label class="label" for="em">Correo</label><input id="em" type="email" autocomplete="email" inputmode="email" autocapitalize="none" value="' + esc(authDraft.email) + '" ' + (codeMode ? 'readonly aria-describedby="code-help"' : '') + ' required></div>' : '') +
+      (codeMode ? '<div class="field"><label class="label" for="recovery-code">Código de verificación</label><input id="recovery-code" class="otp-input" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" minlength="6" maxlength="8" placeholder="Código recibido por correo" aria-describedby="code-help" required></div><div class="muted" id="code-help">Introduce los números del correo de recuperación. No compartas este código con nadie.</div>' : '') +
+      (!resetMode && !codeMode ? '<div class="field"><label class="label" for="pw">' + (updateMode ? 'Nueva contraseña' : 'Contraseña') + '</label><input id="pw" type="password" autocomplete="' + (signup || updateMode ? 'new-password' : 'current-password') + '" minlength="' + (signup || updateMode ? 8 : 6) + '" required></div>' : '') +
       ((signup || updateMode) ? '<div class="field"><label class="label" for="pw2">Confirmar contraseña</label><input id="pw2" type="password" autocomplete="new-password" required></div><div class="muted">Mínimo 8 caracteres.</div>' : '') +
       (authMsg ? '<div class="' + (authMsg.ok ? 'muted' : 'err') + '" role="alert">' + esc(authMsg.text) + '</div>' : '') +
-      '<button class="btn" type="submit"' + (authBusy ? ' disabled' : '') + '>' + (authBusy ? 'Un momento…' : signup ? 'Crear cuenta' : resetMode ? 'Enviar enlace' : updateMode ? 'Guardar nueva contraseña' : 'Entrar') + '</button></form>' +
-      (!updateMode ? '<button class="switch" data-a="auth-switch">' + (signup ? 'Ya tengo cuenta · Entrar' : resetMode ? 'Volver a iniciar sesión' : 'No tengo cuenta · Crear una') + '</button>' : '') +
-      (!signup && !resetMode && !updateMode ? '<button class="switch" data-a="forgot-password">Olvidé mi contraseña</button>' : '') +
-      (!updateMode ? '<div class="auth-divider"><span>o conoce la app</span></div><button class="btn quiet" data-a="start-demo">Explorar con datos de ejemplo</button><div class="muted auth-note">La demostración usa datos ficticios y no necesita iniciar sesión.</div>' : '') + '</div>';
+      '<button class="btn" type="submit"' + (authBusy ? ' disabled' : '') + '>' + (authBusy ? 'Un momento…' : signup ? 'Crear cuenta' : resetMode ? 'Enviar código' : codeMode ? 'Verificar código' : updateMode ? 'Guardar nueva contraseña' : 'Entrar') + '</button></form>' +
+      (!updateMode ? '<button class="switch" data-a="auth-switch">' + (signup ? 'Ya tengo cuenta · Entrar' : (resetMode || codeMode) ? 'Volver a iniciar sesión' : 'No tengo cuenta · Crear una') + '</button>' : '') +
+      (codeMode ? '<button class="switch" data-a="resend-recovery-code">Volver a enviar código</button><button class="switch" data-a="change-recovery-email">Usar otro correo</button>' : '') +
+      (!signup && !resetMode && !codeMode && !updateMode ? '<button class="switch" data-a="forgot-password">Olvidé mi contraseña</button>' : '') +
+      (!updateMode && !codeMode ? '<div class="auth-divider"><span>o conoce la app</span></div><button class="btn quiet" data-a="start-demo">Explorar con datos de ejemplo</button><div class="muted auth-note">La demostración usa datos ficticios y no necesita iniciar sesión.</div>' : '') + '</div>';
   }
   async function submitAuth() {
     if (authMode === 'reset') {
       var resetEmail = (document.getElementById('em') ? document.getElementById('em').value : '').trim();
       if (!resetEmail) { authMsg = { ok: false, text: 'Escribe el correo de tu cuenta.' }; renderAuth(); return; }
+      authDraft.email = resetEmail;
       authBusy = true; authMsg = null; renderAuth();
-      try { check(await sb.auth.resetPasswordForEmail(resetEmail, { redirectTo: location.origin + location.pathname })); authBusy = false; authMsg = { ok: true, text: 'Si el correo existe, recibirás un enlace para cambiar la contraseña. Revisa también spam.' }; renderAuth(); }
-      catch (e) { authBusy = false; authMsg = { ok: false, text: humanError(e) }; renderAuth(); }
+      try {
+        check(await sb.auth.resetPasswordForEmail(resetEmail, { redirectTo: location.origin + location.pathname }));
+        authBusy = false; authMode = 'resetCode';
+        authMsg = { ok: true, text: 'Si el correo corresponde a una cuenta, recibirás un código para recuperar el acceso. Revisa también spam.' };
+        renderAuth();
+      } catch (e) { authBusy = false; authMsg = { ok: false, text: humanError(e) }; renderAuth(); }
+      return;
+    }
+    if (authMode === 'resetCode') {
+      var recoveryEmail = (document.getElementById('em') ? document.getElementById('em').value : authDraft.email).trim();
+      var recoveryCode = (document.getElementById('recovery-code') ? document.getElementById('recovery-code').value : '').replace(/\s+/g, '');
+      if (!recoveryEmail) { authMsg = { ok: false, text: 'Escribe el correo donde recibiste el código.' }; renderAuth(); return; }
+      if (!/^\d{6,8}$/.test(recoveryCode)) { authMsg = { ok: false, text: 'Introduce el código numérico completo que recibiste por correo.' }; renderAuth(); return; }
+      authDraft.email = recoveryEmail; authBusy = true; authMsg = null; renderAuth();
+      try {
+        var verified = check(await sb.auth.verifyOtp({ email: recoveryEmail, token: recoveryCode, type: 'recovery' }));
+        user = verified && verified.data && verified.data.user ? verified.data.user : null;
+        if (!user) throw new Error('No se pudo verificar el código. Solicita uno nuevo e inténtalo otra vez.');
+        authBusy = false; authMode = 'updatePassword';
+        authMsg = { ok: true, text: 'Código verificado. Ahora elige tu nueva contraseña.' };
+        renderAuth();
+      } catch (e) { authBusy = false; authMode = 'resetCode'; authMsg = { ok: false, text: humanError(e) }; renderAuth(); }
       return;
     }
     if (authMode === 'updatePassword') {
@@ -2358,8 +2382,16 @@
       if (await handleExtra(a, el, id, v)) return;
       if (a === 'close-scrim') { if (ev.target === el) { sheet = null; renderSheet(); } return; }
       if (a === 'close') { sheet = null; renderSheet(); return; }
-      if (a === 'auth-switch') { authMode = (authMode === 'signup' || authMode === 'reset') ? 'login' : 'signup'; authMsg = null; renderAuth(); return; }
+      if (a === 'auth-switch') { authMode = (authMode === 'signup' || authMode === 'reset' || authMode === 'resetCode') ? 'login' : 'signup'; authMsg = null; renderAuth(); return; }
       if (a === 'forgot-password') { authMode = 'reset'; authMsg = null; renderAuth(); return; }
+      if (a === 'change-recovery-email') { authMode = 'reset'; authMsg = null; renderAuth(); return; }
+      if (a === 'resend-recovery-code') {
+        if (!authDraft.email) { authMode = 'reset'; authMsg = { ok: false, text: 'Escribe tu correo para solicitar un código.' }; renderAuth(); return; }
+        authBusy = true; authMsg = null; renderAuth();
+        try { check(await sb.auth.resetPasswordForEmail(authDraft.email, { redirectTo: location.origin + location.pathname })); authBusy = false; authMode = 'resetCode'; authMsg = { ok: true, text: 'Si el correo corresponde a una cuenta, te enviaremos otro código. Si acabas de solicitar uno, espera un minuto antes de volver a intentarlo.' }; renderAuth(); }
+        catch (e) { authBusy = false; authMode = 'resetCode'; authMsg = { ok: false, text: humanError(e) }; renderAuth(); }
+        return;
+      }
       if (a === 'start-demo') { startDemoMode(); return; }
       if (a === 'exit-demo') { await exitDemoMode(); return; }
       if (a === 'onboard-next') { if (onboardingState) { onboardingState.step = Math.min(3, onboardingState.step + 1); renderOnboardingOverlay(); } return; }
