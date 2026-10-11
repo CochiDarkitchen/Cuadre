@@ -9,7 +9,7 @@
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#F2F5F3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0E1512" media="(prefers-color-scheme: dark)">
-<script>try{var t=localStorage.getItem('cuadre:theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+<script>try{var r=document.documentElement,t=localStorage.getItem('cuadre:theme');r.setAttribute('data-theme',(t==='light'||t==='system')?t:'dark');var p=JSON.parse(localStorage.getItem('cuadre:ui-prefs:v1')||'{}');r.setAttribute('data-accent',['menta','esmeralda','azul'].indexOf(p.accent)>=0?p.accent:'menta');r.setAttribute('data-density',['compacta','comoda'].indexOf(p.density)>=0?p.density:'comoda');}catch(e){document.documentElement.setAttribute('data-theme','dark');document.documentElement.setAttribute('data-accent','menta');document.documentElement.setAttribute('data-density','comoda');}</script>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -437,6 +437,34 @@ html.privacy-hidden #app .hero:hover, html.privacy-hidden #app .num:hover, html.
 .tx-row-wrap > .tx { flex:1;min-width:0;width:calc(100% - 48px); }
 .tx-fav { flex:none;width:44px;min-width:44px;min-height:64px;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--accent);font-size:22px;font-weight:800; }
 .tx-fav[aria-pressed="true"] { background:color-mix(in srgb,var(--accent) 12%,var(--surface)); }
+
+
+/* Apariencia configurable v1.1: el tema y el acento se aplican mediante tokens globales. */
+:root[data-accent="menta"] { --accent: #16815D; --income: #16815D; --on-accent: #FFFFFF; }
+:root[data-theme="dark"][data-accent="menta"], :root[data-theme="system"][data-accent="menta"] { --accent: #56D6A4; --income: #56D6A4; --on-accent: #092318; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"])[data-accent="menta"] { --accent: #56D6A4; --income: #56D6A4; --on-accent: #092318; }
+}
+:root[data-accent="esmeralda"] { --accent: #087F5B; --income: #087F5B; --on-accent: #FFFFFF; }
+:root[data-theme="dark"][data-accent="esmeralda"], :root[data-theme="system"][data-accent="esmeralda"] { --accent: #55D6A0; --income: #55D6A0; --on-accent: #092318; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"])[data-accent="esmeralda"] { --accent: #55D6A0; --income: #55D6A0; --on-accent: #092318; }
+}
+:root[data-accent="azul"] { --accent: #2864C7; --income: #2864C7; --on-accent: #FFFFFF; }
+:root[data-theme="dark"][data-accent="azul"], :root[data-theme="system"][data-accent="azul"] { --accent: #8DBDFF; --income: #8DBDFF; --on-accent: #102849; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"])[data-accent="azul"] { --accent: #8DBDFF; --income: #8DBDFF; --on-accent: #102849; }
+}
+:root[data-density="comoda"] .card { padding: 22px; gap: 10px; }
+:root[data-density="comoda"] #app.wrap, :root[data-density="comoda"] #app { gap: 18px; }
+:root[data-density="compacta"] .card { padding: 15px; gap: 6px; }
+:root[data-density="compacta"] #app.wrap, :root[data-density="compacta"] #app { gap: 11px; padding-top: 20px; }
+:root[data-density="compacta"] .tx, :root[data-density="compacta"] .link { padding: 10px; min-height: 58px; }
+:root[data-density="compacta"] .wrap { gap: 11px; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto !important; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
 
 </style>
 </head>
