@@ -599,6 +599,36 @@ input:focus, select:focus, textarea:focus {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
 
+
+/* v2.2 — Inicio más claro: jerarquía visual, accesos directos y saldo protagonista */
+.home-welcome{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:8px 2px 2px;}
+.home-welcome>div{min-width:0}.home-eyebrow{font-size:10px;font-weight:800;letter-spacing:.14em;color:var(--accent);margin-bottom:6px}
+.home-welcome .h2{font-size:clamp(25px,6vw,31px);letter-spacing:-.045em}
+.home-welcome p{margin:5px 0 0;max-width:260px}
+.home-add{flex:none;min-width:76px;min-height:76px;border-radius:24px;background:linear-gradient(145deg,var(--accent),color-mix(in srgb,var(--accent) 72%,#fff));color:var(--on-accent);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:12px;font-weight:800;box-shadow:0 9px 24px color-mix(in srgb,var(--accent) 20%,transparent)}
+.home-add>span:first-child{font-size:30px;line-height:1;font-weight:500}
+.home-shortcuts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.home-shortcuts button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;min-width:0;min-height:88px;padding:10px 5px;border:1px solid var(--line);border-radius:19px;background:var(--surface);color:var(--fg);font-size:11px;font-weight:700;text-align:center;line-height:1.25;transition:transform .16s ease,border-color .16s ease,background .16s ease}
+.home-shortcuts button:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 5%,var(--surface));transform:translateY(-2px)}
+.shortcut-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:12px;background:color-mix(in srgb,var(--accent) 13%,var(--surface));color:var(--accent);font-size:21px;font-weight:800}
+.home-currency{gap:5px}.home-currency button{font-size:13px}
+.home-balance-card{position:relative;overflow:hidden;gap:11px;background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 10%,var(--surface)),var(--surface) 64%);border-color:color-mix(in srgb,var(--accent) 24%,var(--line));box-shadow:0 12px 34px color-mix(in srgb,var(--accent) 7%,transparent)}
+.home-balance-card:before{content:"";position:absolute;width:150px;height:150px;border-radius:50%;right:-72px;top:-82px;background:color-mix(in srgb,var(--accent) 9%,transparent);pointer-events:none}
+.home-balance-top{display:flex;align-items:center;justify-content:space-between;gap:8px;position:relative}
+.home-live-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:5px 9px;color:var(--muted);font-size:10px;font-weight:700;white-space:nowrap}
+.home-live-pill i{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 15%,transparent)}
+.home-balance-card .hero{position:relative;font-size:clamp(38px,10vw,48px);letter-spacing:-.055em;margin:1px 0}
+.home-balance-card>.row{font-size:13px;padding:2px 0}.home-balance-card>.row b{font-size:13px;text-align:right}
+.home-balance-card>.row:last-of-type{border-top:1px solid var(--line);padding-top:12px;margin-top:2px;align-items:flex-start}
+.home-balance-card>.row:last-of-type b:last-child{font-size:15px;color:var(--accent)}
+.home-balance-card>.muted{font-size:12px;line-height:1.55}
+.home-month-summary{gap:15px}.home-section-heading{align-items:center}.home-month-tag{font-size:11px;font-weight:800;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--surface));padding:5px 9px;border-radius:999px}
+.home-month-values{align-items:stretch;gap:10px}.home-month-values>.col{flex:1;gap:5px;padding:13px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--surface-2) 45%,var(--surface))}
+.home-month-values>.col:last-child{text-align:left!important}.home-month-values .num{font-size:clamp(17px,5vw,22px);letter-spacing:-.03em;overflow-wrap:anywhere}
+.home-month-values .muted{font-size:12px}.home-month-summary>.muted{padding:9px 11px;border-radius:12px;background:var(--surface-2);font-weight:700}
+@media(min-width:760px){.home-welcome .h2{font-size:32px}.home-shortcuts{grid-template-columns:repeat(3,minmax(0,1fr))}.home-shortcuts button{flex-direction:row;justify-content:flex-start;text-align:left;padding:12px;font-size:13px;min-height:68px}.home-balance-card .hero{font-size:54px}.home-month-values .num{font-size:24px}}
+@media(max-width:360px){.home-welcome{align-items:flex-start}.home-add{min-width:64px;min-height:66px;border-radius:19px}.home-welcome .h2{font-size:23px}.home-shortcuts{gap:5px}.home-shortcuts button{font-size:10px;min-height:80px}.home-month-values>.col{padding:10px 8px}}
+@media(prefers-reduced-motion:reduce){.home-shortcuts button{transition:none}.home-shortcuts button:hover{transform:none}}
 </style>
 </head>
 <body>
