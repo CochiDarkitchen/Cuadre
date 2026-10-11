@@ -432,6 +432,12 @@ html.privacy-hidden #app .hero, html.privacy-hidden #app .num, html.privacy-hidd
 html.privacy-hidden #app .hero:hover, html.privacy-hidden #app .num:hover, html.privacy-hidden #app .amt:hover { filter:none; }
 @media (max-width:560px) { .onboarding-backdrop { padding:12px;align-items:flex-end; } .onboarding-card { border-radius:26px 26px 20px 20px;max-height:92dvh;padding:22px; } .sync-status { border-radius:15px; } }
 @media (prefers-reduced-motion:reduce) { .onboarding-card,.onboard-progress i { animation:none!important;transition:none!important; } }
+
+.tx-row-wrap { display:flex;align-items:stretch;gap:6px;min-width:0; }
+.tx-row-wrap > .tx { flex:1;min-width:0;width:calc(100% - 48px); }
+.tx-fav { flex:none;width:44px;min-width:44px;min-height:64px;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--accent);font-size:22px;font-weight:800; }
+.tx-fav[aria-pressed="true"] { background:color-mix(in srgb,var(--accent) 12%,var(--surface)); }
+
 </style>
 </head>
 <body>
