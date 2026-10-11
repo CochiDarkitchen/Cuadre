@@ -18,7 +18,7 @@
     SUPABASE_URL: 'https://qfkmtxekvywlcgfimwsg.supabase.co',
     SUPABASE_ANON_KEY: 'sb_publishable_JXA4mOZJH3eRJeKd8s6YZw_Y4shklIr',
     VAPID_PUBLIC_KEY: 'BMXienvznWzFHZ_6bto-Pw34SeP791P1eFOsRI3yK4ms6Fu7piR1OOnct0I471G-BRMo6U1d6pnamQZy-bQpHRQ'
- };
+  };
 
   // Limpia lo pegado: agrega https:// si falta y quita barras o rutas de más (/rest/v1).
   (function () {
@@ -27,7 +27,12 @@
     CONFIG.SUPABASE_URL = u; CONFIG.SUPABASE_ANON_KEY = String(CONFIG.SUPABASE_ANON_KEY || '').trim();
   })();
   var CLOUD = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
+  var CLOUD_CONFIGURED = CLOUD; // No se modifica el ajuste real al entrar en la demostración.
+  var demoMode = false;
   var LOCAL_KEY = 'cuadre:web:v1';
+  var DEMO_KEY = 'cuadre:demo:v1';
+  var SYNC_KEY = 'cuadre:last-sync:v1';
+  var UI_PREFS_KEY = 'cuadre:ui-prefs:v1';
   var DISPLAY_KEY = 'cuadre:display';
   var THEME_KEY = 'cuadre:theme';
   var RATE_URL = 'https://ve.dolarapi.com/v1/dolares/oficial';
@@ -146,13 +151,42 @@
   function setTheme(t) {
     try { if (t === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch (e) { /* se aplica igual */ }
     var root = document.documentElement;
-    if (!window.matchMedia || !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (motionAllowed()) {
       root.classList.add('theme-animating'); clearTimeout(themeResetTimer);
       themeResetTimer = setTimeout(function () { root.classList.remove('theme-animating'); }, 320);
     }
     applyTheme(t);
   }
   applyTheme(readTheme());
+
+  function loadUiPrefs() {
+    var defaults = { fontSize: 'normal', hideBalances: false, reduceMotion: false, highContrast: false };
+    try {
+      var value = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || '{}');
+      if (value && typeof value === 'object') {
+        if (['small','normal','large'].indexOf(value.fontSize) >= 0) defaults.fontSize = value.fontSize;
+        defaults.hideBalances = value.hideBalances === true;
+        defaults.reduceMotion = value.reduceMotion === true;
+        defaults.highContrast = value.highContrast === true;
+      }
+    } catch (e) { /* usa las preferencias seguras por defecto */ }
+    return defaults;
+  }
+  var uiPrefs = loadUiPrefs();
+  function applyUiPrefs() {
+    var root = document.documentElement;
+    root.setAttribute('data-font-size', uiPrefs.fontSize || 'normal');
+    root.setAttribute('data-motion', uiPrefs.reduceMotion ? 'reduce' : 'system');
+    root.setAttribute('data-contrast', uiPrefs.highContrast ? 'high' : 'normal');
+    root.classList.toggle('privacy-hidden', !!uiPrefs.hideBalances);
+  }
+  function saveUiPrefs() {
+    try { localStorage.setItem(UI_PREFS_KEY, JSON.stringify(uiPrefs)); } catch (e) { /* preferencia solo de esta sesión */ }
+    applyUiPrefs();
+  }
+  function motionAllowed() {
+    return !uiPrefs.reduceMotion && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
 
   /* Imágenes: se recortan a cuadrado y se reducen para que pesen muy poco (sin subir archivos grandes). */
   function imageToDataUrl(file, size, type, quality) {
@@ -207,6 +241,19 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { el.hidden = true; }, 5000);
   }
+  function toastUndo(msg) {
+    var el = document.getElementById('toast');
+    el.innerHTML = esc(msg) + ' <button class="toast-undo" data-a="undo-tx">Deshacer</button>';
+    el.hidden = false; clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.hidden = true; }, 10000);
+  }
+  function registerUndoTx(tx) { undoLastTx = { id: tx.id, expiresAt: Date.now() + 10000 }; }
+  async function undoLastCreatedTx() {
+    if (!undoLastTx || Date.now() > undoLastTx.expiresAt) { undoLastTx = null; toast('Ya no hay una operación reciente para deshacer.'); return; }
+    var id = undoLastTx.id; if (!S || !S.transactions.some(function (x) { return x.id === id; })) { undoLastTx = null; toast('Este movimiento ya no está disponible para deshacer.'); return; }
+    var ok = await act(async function () { await B.removeTx(id); S.transactions = S.transactions.filter(function (x) { return x.id !== id; }); persist(); });
+    if (ok) { undoLastTx = null; motionRefreshRequested = true; render(); toast('Movimiento deshecho.'); }
+  }
 
   /* ---------- 5. Estado ---------- */
   var S = null;              // datos: accounts, categories, transactions, rate, displayCurrency
@@ -251,6 +298,7 @@
 
   /* ---------- 6. Guardado local y caché ---------- */
   function readDisplay() { try { var v = localStorage.getItem(DISPLAY_KEY); return v === 'USD' ? 'USD' : 'VES'; } catch (e) { return 'VES'; } }
+  function localStorageKey() { return demoMode ? DEMO_KEY : LOCAL_KEY; }
   function cacheKey() { return 'cuadre:cloud:cache:v1:' + (user ? user.id : 'x'); }
   function persist() {
     try {
@@ -258,21 +306,25 @@
         localStorage.setItem(cacheKey(), JSON.stringify(S));
         localStorage.setItem(DISPLAY_KEY, S.displayCurrency);
       } else {
-        localStorage.setItem(LOCAL_KEY, JSON.stringify(S));
+        localStorage.setItem(localStorageKey(), JSON.stringify(S));
       }
+      try {
+        if (CLOUD && user && !demoMode && !offline) localStorage.setItem(SYNC_KEY + ':' + user.id, new Date().toISOString());
+        else if (!CLOUD && !demoMode) localStorage.setItem(SYNC_KEY + ':local', new Date().toISOString());
+      } catch (eSync) { /* el estado de sincronización es informativo */ }
       saveFailed = false;
     } catch (e) { saveFailed = true; }
   }
   function localLoad() {
     var raw = null;
     try {
-      raw = localStorage.getItem(LOCAL_KEY);
+      raw = localStorage.getItem(localStorageKey());
       if (raw === null) return initialData();
       var d = JSON.parse(raw);
       if (valid(d)) return norm(d);
       throw new Error('formato');
     } catch (e) {
-      try { if (raw !== null) localStorage.setItem(LOCAL_KEY + ':dañado', raw); } catch (e2) { /* nada */ }
+      try { if (raw !== null) localStorage.setItem(localStorageKey() + ':dañado', raw); } catch (e2) { /* nada */ }
       return initialData();
     }
   }
@@ -625,6 +677,7 @@
   var busy = false, msgOk = false, newAccCur = 'VES', newCatKind = 'expense', authMode = 'login', authMsg = null, authBusy = false;
   var arm = null, editAcc = null, profDraft = null, authDraft = { email: '', username: '' };
   var quickActionsOpen = false, lastMotionViewKey = null, motionResetTimer = null, themeResetTimer = null, heroAnimationFrame = null, motionRefreshRequested = false;
+  var onboardingState = null, showAvailableExplanation = false, undoLastTx = null;
   var $app = document.getElementById('app'), $nav = document.getElementById('nav'), $navwrap = document.getElementById('navwrap'), $sheet = document.getElementById('sheet'), $quickActions = document.getElementById('quick-actions');
 
   function rateChip() {
@@ -643,9 +696,28 @@
   }
   function banners() {
     var h = '';
+    if (demoMode) h += '<div class="banner demo-banner" role="status">🧪 Modo demostración: estos son datos ficticios y están separados de tus finanzas. <button class="retry" data-a="exit-demo">Salir de la demostración</button></div>';
     if (offline) h += '<div class="banner">Sin conexión: ves tus últimos datos guardados y no puedes hacer cambios.<button class="retry" data-a="retry">Reintentar</button></div>';
     if (saveFailed) h += '<div class="banner bad">No se pudo guardar una copia en este dispositivo. Revisa que el navegador permita guardar datos.</div>';
     return h;
+  }
+  function syncStatusHtml() {
+    if (demoMode) return '<div class="sync-status" role="status"><span class="sync-dot demo-dot"></span>Entorno de ejemplo · no se modifica tu información real</div>';
+    if (offline) return '<div class="sync-status offline-status" role="status"><span class="sync-dot"></span>Sin conexión · se muestran datos guardados</div>';
+    var key = CLOUD && user ? SYNC_KEY + ':' + user.id : SYNC_KEY + ':local', raw = '';
+    try { raw = localStorage.getItem(key) || ''; } catch (e) {}
+    if (CLOUD && user) {
+      var when = raw ? new Date(raw).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' }) : 'sesión activa';
+      return '<div class="sync-status" role="status"><span class="sync-dot"></span>Cuenta en la nube · copia local actualizada ' + esc(when) + '</div>';
+    }
+    var localWhen = raw ? new Date(raw).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' }) : 'aún sin cambios';
+    return '<div class="sync-status" role="status"><span class="sync-dot local-dot"></span>Guardado en este dispositivo · ' + esc(localWhen) + '</div>';
+  }
+  function tipCardHtml() {
+    var dismissed = false, focus = 'control'; try { dismissed = localStorage.getItem('cuadre:tip:transferencias:v1') === '1'; focus = localStorage.getItem('cuadre:onboarding:focus:' + (user ? user.id : 'local')) || 'control'; } catch (e) {}
+    if (dismissed || demoMode) return '';
+    var text = focus === 'saving' ? 'Una meta reserva una parte de tu dinero para un objetivo, pero no mueve fondos ni crea un gasto.' : focus === 'bills' ? 'Registrar una factura con vencimiento te ayuda a anticiparte; revisa Pagos para ver lo que vence pronto.' : 'Mover dinero entre tus propias cuentas es una transferencia, no un ingreso ni un gasto.';
+    return '<div class="helper-tip"><div class="helper-tip-icon" aria-hidden="true">💡</div><div class="helper-tip-content"><b>Consejo de Cuadre</b><div class="muted">' + esc(text) + '</div><button class="linkbtn plain" data-a="sub" data-v="help">Ver guía rápida</button></div><button class="tip-dismiss" data-a="dismiss-tip" aria-label="Ocultar consejo">×</button></div>';
   }
 
   /* Eliminar con doble paso: primero se pulsa el botón y luego se desliza para confirmar. */
@@ -662,7 +734,7 @@
     var month = today().slice(0, 7), sum = monthSummary(month, disp), total = totalAvailable(disp);
     var recent = sorted().slice(0, 5), h = '';
     h += '<div class="top"><div class="brand">Cuadre</div><div class="topr">' + rateChip() +
-      (CLOUD && user ? '<button class="avbtn" data-a="goto-profile" aria-label="Mi perfil">' + pic(S.profile && S.profile.avatar, (S.profile && S.profile.username) || user.email, 'sm') + '</button>' : '') + '</div></div>' + banners();
+      (CLOUD && user ? '<button class="avbtn" data-a="goto-profile" aria-label="Mi perfil">' + pic(S.profile && S.profile.avatar, (S.profile && S.profile.username) || user.email, 'sm') + '</button>' : '') + '</div></div>' + banners() + syncStatusHtml() + tipCardHtml();
     if (rate <= 0) h += '<div class="banner">Aún no hay tasa del dólar. Toca el botón de arriba para definirla.</div>';
     var urg = urgent(), firm = urg.filter(function (i) { return i.level === 'late' || i.level === 'today'; });
     if (firm.length) h += '<button class="banner bad firm" data-a="goto-pay">⚠️ ' + (firm.length === 1 ? 'Atención: ' : 'Atención, ' + firm.length + ' pagos: ') + firm.slice(0, 2).map(function (i) { return esc(i.title) + (i.level === 'late' ? ' (vencido)' : ' (vence hoy)'); }).join(' · ') + (firm.length > 2 ? ' y más' : '') + '</button>';
@@ -672,7 +744,9 @@
       (rate > 0 ? '<div class="muted">≈ ' + fmt(convert(total, disp, other, rate), other) + '</div>' : '') +
       '<div class="dividerline" style="height:1px;background:var(--line);margin:8px 0"></div><div class="row"><span class="muted">Metas reservadas</span><span>' + fmt(plan.goalsReserved, disp) + '</span></div>' +
       '<div class="row"><span class="muted">Pagos próximos · 30 días</span><span>' + fmt(plan.obligations30, disp) + '</span></div><div class="row"><b>Disponible estimado para gastar</b><b class="' + (plan.available < 0 ? '' : 'pos') + '">' + fmt(plan.available, disp) + '</b></div>' +
-      '<div class="muted">Estimación: saldo menos metas reservadas y obligaciones próximas. Las reservas no mueven dinero entre cuentas.</div></div>';
+      '<div class="muted">Estimación: saldo menos metas reservadas y obligaciones próximas. Las reservas no mueven dinero entre cuentas.</div>' +
+      '<button class="linkbtn plain calc-toggle" data-a="toggle-available-help" aria-expanded="' + showAvailableExplanation + '">' + (showAvailableExplanation ? 'Ocultar cómo se calcula' : '¿Cómo se calcula?') + '</button>' +
+      (showAvailableExplanation ? '<div class="calc-breakdown"><b>Cómo interpreta Cuadre tu dinero</b><div class="row"><span>Saldo convertido a ' + (disp === 'USD' ? 'dólares' : 'bolívares') + '</span><span>' + fmt(plan.balance, disp) + '</span></div><div class="row"><span>Metas reservadas</span><span>− ' + fmt(plan.goalsReserved, disp) + '</span></div><div class="row"><span>Obligaciones de los próximos 30 días</span><span>− ' + fmt(plan.obligations30, disp) + '</span></div><div class="row calc-result"><b>Disponible estimado</b><b>' + fmt(plan.available, disp) + '</b></div><div class="muted">Es una estimación de planificación, no un bloqueo de fondos ni un saldo bancario en tiempo real. Los importes en otra moneda dependen de la tasa que tenga Cuadre guardada.</div></div>' : '') + '</div>';
     h += '<div class="card"><div class="label">Proyección al cierre del mes</div><div class="num">' + fmt(forecast.projectedBalance, disp) + '</div><div class="muted">Si mantienes el promedio neto diario de este mes: ' + (forecast.projectedChange >= 0 ? '+' : '−') + fmt(Math.abs(forecast.projectedChange), disp) + ' estimados en los ' + forecast.remainingDays + ' días restantes. Calculado con ' + forecast.sampleDays + ' día(s) de datos; no es una garantía.</div></div>';
     h += '<div class="card"><div class="label">' + monthLabel(month) + '</div><div class="row"><div class="col"><span class="muted">Ingresos</span><span class="num pos">' + fmt(sum.inc, disp) +
       '</span></div><div class="col" style="text-align:right"><span class="muted">Gastos</span><span class="num" style="color:var(--expense)">' + fmt(sum.exp, disp) + '</span></div></div>' +
@@ -1076,7 +1150,7 @@
     var now = new Date().toISOString(), tx = { id: uuid(), type: parsed.type, amountMinor: parsed.amountMinor, currency: parsed.currency, rateE4: parsed.rateE4 || S.rate.rateE4, categoryId: parsed.category.id, accountId: parsed.account.id, note: parsed.note, dateISO: today(), createdAt: now, updatedAt: now, split: null, receiptImage: '' };
     if (!(tx.rateE4 > 0)) { toast('Define la tasa del dólar antes de guardar.'); return false; }
     var ok = await act(async function () { await B.saveTx(tx); S.transactions.push(tx); persist(); });
-    if (ok) { quickParsed = null; assistantDraft = null; toast('Movimiento guardado'); if (context === 'assistant') { assistantAnswer = 'Listo: el movimiento se guardó. ¿Qué más quieres revisar?'; } else { tab = 'moves'; sub = 'menu'; } render(); }
+    if (ok) { registerUndoTx(tx); quickParsed = null; assistantDraft = null; if (context === 'assistant') { assistantAnswer = 'Listo: el movimiento se guardó. ¿Qué más quieres revisar?'; } else { tab = 'moves'; sub = 'menu'; } render(); toastUndo('Movimiento guardado.'); }
     return ok;
   }
   async function saveQuickEntry() {
@@ -1324,6 +1398,20 @@
     var ok = await act(async function () { await B.removeFamilyExpense(id); S.familyExpenses = S.familyExpenses.filter(function (x) { return x.id !== id; }); persist(); }); if (ok) render();
   }
 
+  function viewHelp() {
+    var back = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button>';
+    return back + '<h1 class="h2">Ayuda y primeros pasos</h1>' + banners() +
+      '<div class="card"><div class="label">Empieza por lo básico</div><div class="help-step"><b>1. Crea o revisa tus cuentas</b><div class="muted">En Más › Cuentas, configura efectivo, bancos y billeteras en la moneda que realmente usan.</div></div><div class="help-step"><b>2. Registra ingresos y gastos</b><div class="muted">Usa el botón + o escribe una frase en Entrada rápida. Revisa la interpretación antes de guardarla.</div></div><div class="help-step"><b>3. Registra transferencias como transferencias</b><div class="muted">Mover dinero entre tus propias cuentas no debe aumentar ingresos ni gastos.</div></div><div class="help-step"><b>4. Guarda copias</b><div class="muted">Ve a Más › Copia de seguridad y descarga un JSON periódicamente. Guárdalo en un lugar seguro.</div></div></div>' +
+      '<div class="card"><div class="label">Cómo se calculan las cifras</div><b>Saldo total</b><div class="muted">Suma los saldos de las cuentas conocidas por Cuadre y convierte otras monedas con la tasa guardada disponible. No es una conexión bancaria automática.</div><b>Disponible estimado</b><div class="muted">Saldo total − montos reservados para metas − obligaciones identificadas dentro de los próximos 30 días. Una reserva no mueve el dinero físicamente.</div><b>Proyección de fin de mes</b><div class="muted">Extrapola el promedio diario neto registrado en el mes actual. Puede variar mucho si hay pocos datos o ingresos irregulares.</div><b>Efecto de la tasa</b><div class="muted">Compara el valor equivalente de los saldos en moneda extranjera usando tasas guardadas. Es una diferencia de valoración referencial, no ingreso ni pérdida contable.</div></div>' +
+      '<div class="card"><div class="label">Guardado y sincronización</div><div class="muted">En modo local, los cambios se guardan en este navegador y no pasan a otros dispositivos. Con Supabase, la sincronización depende de la conexión y de las políticas de la base de datos. Comprueba el estado de guardado y guarda copias externas.</div></div>' +
+      '<div class="card"><div class="label">Accesibilidad y atajos</div><div class="muted">Escape cierra una ventana de registro o el menú rápido. En Movimientos, pulsa / cuando no estés escribiendo para ir al buscador. Pulsa ? para volver a esta guía desde cualquier pantalla.</div><div class="muted">Puedes configurar tamaño de texto, mayor contraste, movimiento reducido y ocultar saldos en Más › Apariencia.</div></div>' +
+      '<button class="btn" data-a="start-onboarding-again">Repetir bienvenida guiada</button><button class="btn quiet" data-a="sub" data-v="demo">Probar con datos de ejemplo</button>';
+  }
+  function viewDemo() {
+    return '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Modo demostración</h1>' + banners() +
+      '<div class="card"><div class="demo-mark">🧪</div><h2 class="h2">Explora Cuadre sin miedo</h2><div class="muted">Usa cuentas, movimientos, presupuestos y metas ficticios. Las operaciones realizadas durante la demostración se guardan en una zona local separada; no envían datos a Supabase ni modifican tus finanzas reales.</div><div class="muted">Salir vuelve a tus datos habituales. La demostración no representa recomendaciones de inversión ni saldos reales.</div><button class="btn" data-a="start-demo">Entrar a la demostración</button></div>';
+  }
+
   function viewMore() {
     if (sub === 'menu') {
       var r = S.rate.rateE4;
@@ -1337,6 +1425,8 @@
         ['goals', '🎯', 'Metas de ahorro', (S.goals || []).length + ' metas activas'],
         ['allocation', '🪙', 'Distribución del ingreso', 'Porcentajes para organizar tu dinero'],
         ['assistant', '✨', 'Asistente financiero', 'Pregunta sobre tus datos o prepara movimientos'],
+        ['help', '❔', 'Ayuda y primeros pasos', 'Guía, cálculos y preguntas frecuentes'],
+        ['demo', '🧪', 'Modo demostración', 'Explora con movimientos ficticios separados'],
         ['family', '👨‍👩‍👧', 'Espacio compartido', 'Cuentas compartidas para hogar o pareja'],
         ['rate', '💱', 'Tasas', r > 0 ? 'Dólar BCV: Bs ' + fmtRate(r) : 'Sin definir'],
         ['remind', '🔔', 'Avisos', S.prefs.remindDays + (S.prefs.remindDays === 1 ? ' día antes' : ' días antes')],
@@ -1352,9 +1442,12 @@
         return '<button class="link" data-a="sub" data-v="' + i[0] + '"><span class="e" aria-hidden="true">' + i[1] + '</span><span class="col"><b>' + i[2] + '</b><span class="muted">' + i[3] + '</span></span><span class="chev" aria-hidden="true">›</span></button>';
       }).join('');
       if (CLOUD && user) h += '<button class="btn quiet" data-a="logout">Cerrar sesión</button>';
-      return h + '<div class="muted">Cuadre v0.7 Motion Edition · ' + (CLOUD ? 'tus datos están en la nube.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
+      h += '<div class="card privacy-note"><b>Estado de tus datos</b>' + syncStatusHtml() + '<div class="muted">Haz copias JSON periódicas y guárdalas fuera de este dispositivo. Una copia en el navegador no reemplaza un respaldo externo.</div></div>';
+      return h + '<div class="muted">Cuadre v0.8 Welcome Edition · ' + (demoMode ? 'demostración aislada.' : CLOUD ? 'tus datos sincronizan con la nube cuando la conexión está disponible.' : 'modo local: tus datos se guardan en este navegador.') + '</div>';
     }
     var back = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button>';
+    if (sub === 'help') return viewHelp();
+    if (sub === 'demo') return viewDemo();
     if (sub === 'budgets') return viewBudgets();
     if (sub === 'remind') return viewRemind();
     if (sub === 'f-bud') return viewForm();
@@ -1401,9 +1494,13 @@
     }
     if (sub === 'theme') {
       var th = readTheme();
-      return back + '<h1 class="h2">Apariencia</h1>' + banners() +
-        '<div class="seg" role="group" aria-label="Tema"><button data-a="theme" data-v="system" aria-pressed="' + (th === 'system') + '">Sistema</button><button data-a="theme" data-v="light" aria-pressed="' + (th === 'light') + '">Claro</button><button data-a="theme" data-v="dark" aria-pressed="' + (th === 'dark') + '">Oscuro</button></div>' +
-        '<div class="muted">"Sistema" sigue el modo claro u oscuro de tu teléfono o computadora. Esta opción se guarda en este dispositivo.</div>';
+      return back + '<h1 class="h2">Apariencia y accesibilidad</h1>' + banners() +
+        '<div class="card"><div class="label">Tema</div><div class="seg" role="group" aria-label="Tema"><button data-a="theme" data-v="system" aria-pressed="' + (th === 'system') + '">Sistema</button><button data-a="theme" data-v="light" aria-pressed="' + (th === 'light') + '">Claro</button><button data-a="theme" data-v="dark" aria-pressed="' + (th === 'dark') + '">Oscuro</button></div><div class="muted">Sistema sigue el modo de tu dispositivo. La elección se guarda en este navegador.</div></div>' +
+        '<div class="card"><div class="label">Tamaño de texto</div><div class="seg" role="group" aria-label="Tamaño de texto"><button data-a="pref-font" data-v="small" aria-pressed="' + (uiPrefs.fontSize === 'small') + '">Pequeño</button><button data-a="pref-font" data-v="normal" aria-pressed="' + (uiPrefs.fontSize === 'normal') + '">Normal</button><button data-a="pref-font" data-v="large" aria-pressed="' + (uiPrefs.fontSize === 'large') + '">Grande</button></div><div class="pref-preview">Este es un ejemplo de cómo se verá el texto en Cuadre.</div></div>' +
+        '<div class="card pref-list"><label class="pref-row"><span><b>Ocultar saldos</b><span class="muted">Difumina los importes en pantalla cuando estés en público.</span></span><input type="checkbox" data-pref="hideBalances" ' + (uiPrefs.hideBalances ? 'checked' : '') + ' aria-label="Ocultar saldos"></label>' +
+        '<label class="pref-row"><span><b>Reducir animaciones</b><span class="muted">Reduce transiciones y movimiento. También se respeta la preferencia del sistema.</span></span><input type="checkbox" data-pref="reduceMotion" ' + (uiPrefs.reduceMotion ? 'checked' : '') + ' aria-label="Reducir animaciones"></label>' +
+        '<label class="pref-row"><span><b>Mayor contraste</b><span class="muted">Resalta bordes y separación entre elementos.</span></span><input type="checkbox" data-pref="highContrast" ' + (uiPrefs.highContrast ? 'checked' : '') + ' aria-label="Mayor contraste"></label></div>' +
+        '<button class="btn quiet" data-a="reset-onboarding">Volver a ver la guía de bienvenida</button><div class="muted">Estas preferencias solo afectan a este dispositivo. Ocultar saldos es una ayuda visual de privacidad, no un control de acceso.</div>';
     }
     if (sub === 'profile' && CLOUD && user) {
       var pd = profDraft || { username: '', avatar: '' }, pf2 = S.profile || {};
@@ -1468,7 +1565,7 @@
   }
 
   function animateHeroNumbers() {
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (!motionAllowed()) return;
     var els = $app.querySelectorAll('.hero');
     if (!els.length || typeof window.requestAnimationFrame !== 'function') return;
     if (heroAnimationFrame) cancelAnimationFrame(heroAnimationFrame);
@@ -1510,6 +1607,66 @@
     var plus = $nav ? $nav.querySelector('.plus') : null;
     if (plus) { plus.textContent = '+'; plus.setAttribute('aria-expanded', 'false'); plus.setAttribute('aria-label', 'Registrar un movimiento'); }
   }
+  function onboardingDoneKey() { return 'cuadre:onboarding:v08:done:' + (demoMode ? 'demo' : user ? user.id : 'local'); }
+  function onboardingIsDone() { try { return localStorage.getItem(onboardingDoneKey()) === '1'; } catch (e) { return false; } }
+  function renderOnboardingOverlay() {
+    var root = document.getElementById('onboarding-root');
+    if (!root) { root = document.createElement('div'); root.id = 'onboarding-root'; document.body.appendChild(root); }
+    if (!S || demoMode || onboardingIsDone()) { root.innerHTML = ''; onboardingState = null; return; }
+    if (!onboardingState) onboardingState = { step: 0, currency: S.displayCurrency || 'VES', focus: 'control' };
+    var o = onboardingState, content = '', progress = (o.step + 1) + ' de 4';
+    if (o.step === 0) content = '<div class="onboard-emoji">✦</div><p class="label">BIENVENIDO A CUADRE</p><h2>Tu dinero, más claro y a tu manera.</h2><p>En unos pasos tendrás una base sencilla para registrar gastos, entender tus cuentas y planificar tus metas.</p><div class="onboard-benefits"><span>✓ Sin tutoriales interminables</span><span>✓ Puedes saltar lo que no necesites</span><span>✓ Tus cálculos explican qué incluyen</span></div><button class="btn" data-a="onboard-next">Empezar</button>';
+    else if (o.step === 1) content = '<p class="label">PASO 2 · PREFERENCIAS</p><h2>¿En qué moneda quieres ver el resumen?</h2><p>Esto cambia la moneda de visualización; no convierte ni mueve físicamente el saldo de tus cuentas.</p><div class="seg onboard-seg"><button data-a="onboard-currency" data-v="VES" aria-pressed="' + (o.currency === 'VES') + '">Bolívares (Bs)</button><button data-a="onboard-currency" data-v="USD" aria-pressed="' + (o.currency === 'USD') + '">Dólares ($)</button></div><button class="btn" data-a="onboard-next">Continuar</button>';
+    else if (o.step === 2) content = '<p class="label">PASO 3 · TU PRIORIDAD</p><h2>¿Qué te gustaría mejorar primero?</h2><p>Solo usaremos esta preferencia para adaptar consejos iniciales. Puedes cambiarla después.</p><div class="onboard-options"><button data-a="onboard-focus" data-v="control" aria-pressed="' + (o.focus === 'control') + '"><span>📒</span><b>Controlar mis gastos</b><small>Entender dónde va mi dinero</small></button><button data-a="onboard-focus" data-v="saving" aria-pressed="' + (o.focus === 'saving') + '"><span>🎯</span><b>Ahorrar para metas</b><small>Reservar dinero con intención</small></button><button data-a="onboard-focus" data-v="bills" aria-pressed="' + (o.focus === 'bills') + '"><span>🗓️</span><b>Organizar mis pagos</b><small>Anticiparme a los vencimientos</small></button></div><button class="btn" data-a="onboard-next">Continuar</button>';
+    else content = '<div class="onboard-emoji">✓</div><p class="label">PASO 4 · TODO LISTO</p><h2>Ya puedes empezar.</h2><p>Cuadre te mostrará saldos estimados, presupuestos y movimientos. Si no hay datos aún, algunas cifras aparecerán vacías hasta registrar tus primeras operaciones.</p><button class="btn" data-a="onboard-finish">Ir a Cuadre</button><button class="btn quiet" data-a="onboard-first-move">Registrar mi primer movimiento</button>';
+    root.innerHTML = '<div class="onboarding-backdrop"><section class="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboard-title"><div class="onboard-top"><span class="brand">Cuadre</span><span class="onboard-count">' + progress + '</span></div><div id="onboard-title" class="onboard-content">' + content + '</div><div class="onboard-footer"><span class="onboard-progress"><i style="width:' + ((o.step + 1) * 25) + '%"></i></span><button class="switch" data-a="onboard-skip">Saltar guía</button></div></section></div>';
+    var focus = root.querySelector('.onboard-content button'); if (focus) focus.focus({ preventScroll: true });
+  }
+  function finishOnboarding(openFirstMove) {
+    var o = onboardingState || { currency: S.displayCurrency, focus: 'control' };
+    S.displayCurrency = o.currency === 'USD' ? 'USD' : 'VES';
+    persist();
+    try { localStorage.setItem(onboardingDoneKey(), '1'); localStorage.setItem('cuadre:onboarding:focus:' + (user ? user.id : 'local'), o.focus || 'control'); } catch (e) {}
+    onboardingState = null;
+    var root = document.getElementById('onboarding-root'); if (root) root.innerHTML = '';
+    render();
+    if (openFirstMove) openSheet(); else toast('Bienvenido a Cuadre. Puedes empezar registrando tu primer movimiento.');
+  }
+  function makeDemoData() {
+    var d = initialData();
+    var acc = function (name) { return d.accounts.filter(function (a) { return a.name === name; })[0]; };
+    var cat = function (name, kind) { return d.categories.filter(function (c) { return c.name === name && c.kind === kind; })[0]; };
+    var usdCash = acc('Efectivo $'), vesCash = acc('Efectivo Bs'), bank = acc('Banco 1'), binance = acc('Binance');
+    usdCash.openingMinor = 12000; vesCash.openingMinor = 650000; bank.openingMinor = 4800000; binance.openingMinor = 23000;
+    d.rate = { rateE4: 3650000, updatedAt: new Date().toISOString(), source: 'demo' }; d.rateHistory = [{ rateE4: 3650000, source: 'demo', recordedAt: new Date().toISOString() }];
+    var now = new Date().toISOString();
+    function add(type, amount, currency, account, category, note, daysAgo) { d.transactions.push({ id: uuid(), type: type, amountMinor: amount, currency: currency, rateE4: d.rate.rateE4, categoryId: cat(category, type).id, accountId: account.id, note: note, dateISO: addDays(today(), -daysAgo), createdAt: now, updatedAt: now, split: null, receiptImage: '' }); }
+    add('income', 85000, 'USD', binance, 'Freelance', 'Proyecto freelance', 4);
+    add('expense', 1850, 'USD', usdCash, 'Alimentación', 'Almuerzo', 1);
+    add('expense', 900, 'USD', usdCash, 'Transporte', 'Taxi', 2);
+    add('expense', 520000, 'VES', vesCash, 'Servicios', 'Internet y teléfono', 5);
+    add('income', 1500000, 'VES', bank, 'Sueldo', 'Pago recibido', 7);
+    add('expense', 3400, 'USD', binance, 'Compras', 'Material de trabajo', 3);
+    var food = cat('Alimentación','expense'), transit = cat('Transporte','expense');
+    d.budgets = [{ id: uuid(), categoryId: food.id, limitMinor: 15000, currency: 'USD', createdAt: now }, { id: uuid(), categoryId: transit.id, limitMinor: 7500, currency: 'USD', createdAt: now }];
+    d.goals = [{ id: uuid(), name: 'Equipo de trabajo', targetMinor: 100000, savedMinor: 37500, currency: 'USD', dueDate: addDays(today(), 90), note: 'Meta de ejemplo', createdAt: now }, { id: uuid(), name: 'Fondo de emergencias', targetMinor: 200000, savedMinor: 60000, currency: 'USD', dueDate: '', note: '', createdAt: now }];
+    d.scheduled = [{ id: uuid(), name: 'Internet', amountMinor: 2500, currency: 'VES', categoryId: cat('Servicios','expense').id, accountId: bank.id, frequency: 'monthly', nextDue: addDays(today(), 5), anchorDay: new Date().getDate(), remindDays: 3, active: true, createdAt: now }];
+    d.displayCurrency = 'USD';
+    return norm(d);
+  }
+  function startDemoMode() {
+    demoMode = true; CLOUD = false; user = null; offline = false; S = makeDemoData();
+    tab = 'home'; sub = 'menu'; onboardingState = null; quickActionsOpen = false; undoLastTx = null; quickParsed = null; assistantDraft = null; sheet = null; renderSheet();
+    try { localStorage.setItem(onboardingDoneKey(), '1'); } catch (e) {}
+    render(); window.scrollTo(0, 0); toast('Modo demostración iniciado. Tus datos reales están separados.');
+  }
+  async function exitDemoMode() {
+    demoMode = false; CLOUD = CLOUD_CONFIGURED; user = null; S = null; onboardingState = null; undoLastTx = null; quickParsed = null; assistantDraft = null; tab = 'home'; sub = 'menu';
+    try { localStorage.removeItem(DEMO_KEY); } catch (e) {}
+    if (CLOUD_CONFIGURED) await boot();
+    else { await startApp(); }
+  }
+
   function render() {
     if (!S) return;
     var motionViewKey = tab + ':' + sub;
@@ -1517,7 +1674,7 @@
     motionRefreshRequested = false;
     lastMotionViewKey = motionViewKey;
     $app.innerHTML = tab === 'home' ? viewHome() : tab === 'moves' ? viewMoves() : tab === 'pay' ? viewPay() : viewMore();
-    if (shouldAnimateView && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+    if (shouldAnimateView && motionAllowed()) {
       $app.classList.remove('motion-enter');
       // Fuerza un nuevo ciclo de animación solo al cambiar de pantalla, no al actualizar cifras.
       void $app.offsetWidth;
@@ -1535,6 +1692,8 @@
     };
     $nav.innerHTML = btn(tabs[0]) + btn(tabs[1]) + '<button class="plus" data-a="new" aria-label="' + (quickActionsOpen ? 'Cerrar acciones rápidas' : 'Registrar un movimiento') + '" aria-expanded="' + quickActionsOpen + '">' + (quickActionsOpen ? '×' : '+') + '</button>' + btn(tabs[2]) + btn(tabs[3]);
     renderQuickActions();
+    applyUiPrefs();
+    renderOnboardingOverlay();
   }
 
   /* ---------- 10. Pantalla de acceso (modo nube) ---------- */
@@ -1553,7 +1712,8 @@
       (authMsg ? '<div class="' + (authMsg.ok ? 'muted' : 'err') + '" role="alert">' + esc(authMsg.text) + '</div>' : '') +
       '<button class="btn" type="submit"' + (authBusy ? ' disabled' : '') + '>' + (authBusy ? 'Un momento…' : signup ? 'Crear cuenta' : resetMode ? 'Enviar enlace' : updateMode ? 'Guardar nueva contraseña' : 'Entrar') + '</button></form>' +
       (!updateMode ? '<button class="switch" data-a="auth-switch">' + (signup ? 'Ya tengo cuenta · Entrar' : resetMode ? 'Volver a iniciar sesión' : 'No tengo cuenta · Crear una') + '</button>' : '') +
-      (!signup && !resetMode && !updateMode ? '<button class="switch" data-a="forgot-password">Olvidé mi contraseña</button>' : '') + '</div>';
+      (!signup && !resetMode && !updateMode ? '<button class="switch" data-a="forgot-password">Olvidé mi contraseña</button>' : '') +
+      (!updateMode ? '<div class="auth-divider"><span>o conoce la app</span></div><button class="btn quiet" data-a="start-demo">Explorar con datos de ejemplo</button><div class="muted auth-note">La demostración usa datos ficticios y no necesita iniciar sesión.</div>' : '') + '</div>';
   }
   async function submitAuth() {
     if (authMode === 'reset') {
@@ -1689,7 +1849,7 @@
       if (existing) S.transactions = S.transactions.map(function (x) { return x.id === tx.id ? tx : x; }); else S.transactions.push(tx);
       persist();
     });
-    if (ok) { if (s.pay) await afterPay(s.pay); sheet = null; renderSheet(); motionRefreshRequested = true; render(); } else if (sheet) { sheet.saving = false; renderSheet(false); }
+    if (ok) { if (s.pay) await afterPay(s.pay); else if (!existing) registerUndoTx(tx); sheet = null; renderSheet(); motionRefreshRequested = true; render(); if (!existing && !tx.pay && !s.pay) toastUndo('Movimiento guardado.'); } else if (sheet) { sheet.saving = false; renderSheet(false); }
   }
   async function deleteTx() {
     var s = sheet; if (!s || s.saving) return;
@@ -2155,6 +2315,14 @@
   }
 
   /* ---------- 14. Eventos ---------- */
+  document.addEventListener('change', function (ev) {
+    var prefInput = ev.target;
+    if (!prefInput || !prefInput.dataset || !prefInput.dataset.pref) return;
+    var prefName = prefInput.dataset.pref;
+    if (['hideBalances','reduceMotion','highContrast'].indexOf(prefName) < 0) return;
+    uiPrefs[prefName] = !!prefInput.checked; saveUiPrefs();
+    if (S && tab === 'more' && sub === 'theme') render();
+  });
   document.addEventListener('input', function (ev) {
     var t = ev.target;
     if (t.dataset && t.dataset.fd && fd) { fd[t.dataset.fd] = t.value; return; }
@@ -2172,6 +2340,11 @@
   });
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape' && quickActionsOpen) closeQuickActions();
+    if (ev.key === 'Enter' && ev.target && ev.target.id === 'quick-text' && !ev.isComposing) { ev.preventDefault(); var qp = document.querySelector('[data-a="quick-parse"]'); if (qp) qp.click(); }
+    var tag = ev.target && ev.target.tagName ? ev.target.tagName.toLowerCase() : '';
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || (ev.target && ev.target.isContentEditable)) return;
+    if (ev.key === '/' && tab === 'moves') { ev.preventDefault(); var searchBox = document.getElementById('q'); if (searchBox) searchBox.focus(); }
+    if (ev.key === '?') { ev.preventDefault(); tab = 'more'; sub = 'help'; render(); window.scrollTo(0, 0); }
   });
   document.addEventListener('click', async function (ev) {
     var el = ev.target.closest('[data-a]');
@@ -2187,6 +2360,19 @@
       if (a === 'close') { sheet = null; renderSheet(); return; }
       if (a === 'auth-switch') { authMode = (authMode === 'signup' || authMode === 'reset') ? 'login' : 'signup'; authMsg = null; renderAuth(); return; }
       if (a === 'forgot-password') { authMode = 'reset'; authMsg = null; renderAuth(); return; }
+      if (a === 'start-demo') { startDemoMode(); return; }
+      if (a === 'exit-demo') { await exitDemoMode(); return; }
+      if (a === 'onboard-next') { if (onboardingState) { onboardingState.step = Math.min(3, onboardingState.step + 1); renderOnboardingOverlay(); } return; }
+      if (a === 'onboard-skip' || a === 'onboard-finish') { finishOnboarding(false); return; }
+      if (a === 'onboard-first-move') { finishOnboarding(true); return; }
+      if (a === 'onboard-currency') { if (onboardingState) { onboardingState.currency = v === 'USD' ? 'USD' : 'VES'; renderOnboardingOverlay(); } return; }
+      if (a === 'onboard-focus') { if (onboardingState) { onboardingState.focus = ['control','saving','bills'].indexOf(v) >= 0 ? v : 'control'; renderOnboardingOverlay(); } return; }
+      if (a === 'dismiss-tip') { try { localStorage.setItem('cuadre:tip:transferencias:v1', '1'); } catch (e) {} render(); return; }
+      if (a === 'toggle-available-help') { showAvailableExplanation = !showAvailableExplanation; render(); return; }
+      if (a === 'toggle-pref') { var pk = el.dataset.pref, inputPref = el.matches && el.matches('input') ? el : el.querySelector && el.querySelector('input[data-pref]'); if (['hideBalances','reduceMotion','highContrast'].indexOf(pk) >= 0) { uiPrefs[pk] = inputPref ? !!inputPref.checked : !uiPrefs[pk]; saveUiPrefs(); render(); } return; }
+      if (a === 'pref-font') { uiPrefs.fontSize = ['small','normal','large'].indexOf(v) >= 0 ? v : 'normal'; saveUiPrefs(); render(); return; }
+      if (a === 'reset-onboarding' || a === 'start-onboarding-again') { try { localStorage.removeItem(onboardingDoneKey()); } catch (e) {} onboardingState = { step: 0, currency: S.displayCurrency || 'VES', focus: 'control' }; renderOnboardingOverlay(); return; }
+      if (a === 'undo-tx') { await undoLastCreatedTx(); return; }
       if (a === 'remove-receipt') { if (sheet) { sheet.receiptImage = ''; renderSheet(false); } return; }
       if (a === 'repeat-tx') { if (sheet) { var oldSheet = sheet; sheet = Object.assign({}, oldSheet, { id: null, dateMode: 'today', customDate: today(), receiptImage: '', errors: {}, confirmDelete: false, saving: false, pay: null }); renderSheet(false); toast('Movimiento listo para repetir. Revisa el monto y guárdalo.'); } return; }
       if (a === 'tab') { quickActionsOpen = false; arm = null; fd = null; tab = v; sub = 'menu'; msg = null; topMsg = null; render(); window.scrollTo(0, 0); return; }
@@ -2350,6 +2536,7 @@
     $navwrap.hidden = true;
     $app.innerHTML = '<div class="auth"><div class="brand">Cuadre</div><div class="banner bad" role="alert">' + esc(text) + '</div>' +
       (canRetry ? '<button class="btn" data-a="retry">Reintentar</button>' : '') +
+      '<button class="btn quiet" data-a="start-demo">Explorar con datos de ejemplo</button><div class="muted auth-note">La demostración funciona sin iniciar sesión y no modifica tus datos reales.</div>' +
       (CLOUD && sb ? '<button class="btn quiet" data-a="logout">Cerrar sesión</button>' : '') + '</div>';
   }
   async function startApp() {
@@ -2385,6 +2572,7 @@
     if (session) { user = session.user; if (recoveryLink) { authMode = 'updatePassword'; authMsg = null; renderAuth(); } else await startApp(); } else renderAuth();
   }
   // Se expone solo lo necesario para las pruebas automáticas.
-  window.__cuadre = { parseAmount: parseAmount, parseRate: parseRate, fmt: fmt, fmtRate: fmtRate, convert: convert };
+  applyUiPrefs();
+  window.__cuadre = { parseAmount: parseAmount, parseRate: parseRate, fmt: fmt, fmtRate: fmtRate, convert: convert, makeDemoData: makeDemoData };
   boot();
 })();
