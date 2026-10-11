@@ -748,7 +748,7 @@
     var disp = S.displayCurrency, other = disp === 'VES' ? 'USD' : 'VES', rate = S.rate.rateE4;
     var month = today().slice(0, 7), sum = monthSummary(month, disp), total = totalAvailable(disp);
     var recent = sorted().slice(0, 5), h = '';
-    h += '<div class="top"><div class="brand">Cuadre</div><div class="topr">' + rateChip() +
+    h += '<div class="top"><div class="brand brand-lockup"><img src="icons/icon-192.png" alt="" width="36" height="36" aria-hidden="true"><span>Cuadre</span></div><div class="topr">' + rateChip() +
       (CLOUD && user ? '<button class="avbtn" data-a="goto-profile" aria-label="Mi perfil">' + pic(S.profile && S.profile.avatar, (S.profile && S.profile.username) || user.email, 'sm') + '</button>' : '') + '</div></div>' + banners() + syncStatusHtml() + tipCardHtml();
     if (rate <= 0) h += '<div class="banner">Aún no hay tasa del dólar. Toca el botón de arriba para definirla.</div>';
     var urg = urgent(), firm = urg.filter(function (i) { return i.level === 'late' || i.level === 'today'; });
@@ -792,7 +792,7 @@
       if (filter !== 'all' && t.type !== filter) return false;
       if (!q) return true;
       var c = catById(t.categoryId), a = accById(t.accountId);
-      return [t.note, c ? c.name : '', a ? a.name : ''].join(' ').toLowerCase().indexOf(q) >= 0;
+      return [t.note, c ? c.name : '', a ? a.name : '', String(t.amountMinor / 100), String(t.amountMinor), fmt(t.amountMinor, t.currency), t.currency].join(' ').toLowerCase().indexOf(q) >= 0;
     });
     if (!items.length) {
       return S.transactions.length === 0
@@ -1768,7 +1768,7 @@
     $navwrap.hidden = true; sheet = null; renderSheet();
     var signup = authMode === 'signup', resetMode = authMode === 'reset', codeMode = authMode === 'resetCode', updateMode = authMode === 'updatePassword';
     var heading = signup ? 'Crea tu cuenta para guardar tus finanzas en la nube y usarlas desde cualquier dispositivo.' : resetMode ? 'Te enviaremos un código de verificación por correo.' : codeMode ? 'Escribe el código que recibiste por correo para verificar tu identidad.' : updateMode ? 'Elige una contraseña nueva para tu cuenta.' : 'Inicia sesión para ver tus finanzas.';
-    $app.innerHTML = '<div class="auth"><div class="brand">Cuadre</div>' +
+    $app.innerHTML = '<div class="auth"><div class="brand brand-lockup"><img src="icons/icon-192.png" alt="" width="48" height="48" aria-hidden="true"><span>Cuadre</span></div>' +
       '<div class="muted">' + heading + '</div>' +
       '<form id="authform" novalidate>' +
       (signup ? '<div class="field"><label class="label" for="un">Usuario</label><input id="un" maxlength="20" autocomplete="username" autocapitalize="none" placeholder="ej. daniela_14" value="' + esc(authDraft.username) + '" required></div>' : '') +
@@ -2643,7 +2643,7 @@
   /* ---------- 15. Arranque ---------- */
   function renderFatal(text, canRetry) {
     $navwrap.hidden = true;
-    $app.innerHTML = '<div class="auth"><div class="brand">Cuadre</div><div class="banner bad" role="alert">' + esc(text) + '</div>' +
+    $app.innerHTML = '<div class="auth"><div class="brand brand-lockup"><img src="icons/icon-192.png" alt="" width="48" height="48" aria-hidden="true"><span>Cuadre</span></div><div class="banner bad" role="alert">' + esc(text) + '</div>' +
       (canRetry ? '<button class="btn" data-a="retry">Reintentar</button>' : '') +
       '<button class="btn quiet" data-a="start-demo">Explorar con datos de ejemplo</button><div class="muted auth-note">La demostración funciona sin iniciar sesión y no modifica tus datos reales.</div>' +
       (CLOUD && sb ? '<button class="btn quiet" data-a="logout">Cerrar sesión</button>' : '') + '</div>';
@@ -2665,7 +2665,7 @@
       render(); autoRate(); autoRefs(); notifyOnOpen(); return;
     }
     $navwrap.hidden = true;
-    $app.innerHTML = '<div class="auth"><div class="brand">Cuadre</div><div class="muted">Cargando tus datos…</div></div>';
+    $app.innerHTML = '<div class="auth"><div class="brand brand-lockup"><img src="icons/icon-192.png" alt="" width="48" height="48" aria-hidden="true"><span>Cuadre</span></div><div class="muted">Cargando tus datos…</div></div>'; 
     try {
       S = await cloudLoad(); offline = false; persist();
     } catch (e) {
