@@ -629,6 +629,15 @@ input:focus, select:focus, textarea:focus {
 @media(min-width:760px){.home-welcome .h2{font-size:32px}.home-shortcuts{grid-template-columns:repeat(3,minmax(0,1fr))}.home-shortcuts button{flex-direction:row;justify-content:flex-start;text-align:left;padding:12px;font-size:13px;min-height:68px}.home-balance-card .hero{font-size:54px}.home-month-values .num{font-size:24px}}
 @media(max-width:360px){.home-welcome{align-items:flex-start}.home-add{min-width:64px;min-height:66px;border-radius:19px}.home-welcome .h2{font-size:23px}.home-shortcuts{gap:5px}.home-shortcuts button{font-size:10px;min-height:80px}.home-month-values>.col{padding:10px 8px}}
 @media(prefers-reduced-motion:reduce){.home-shortcuts button{transition:none}.home-shortcuts button:hover{transform:none}}
+
+/* v2.3 — Inicio enfocado: saldo primero, navegación sin duplicados */
+.home-currency{margin:8px 0 12px;max-width:100%;}
+.home-balance-card{position:relative;overflow:hidden;padding:clamp(22px,3vw,32px);border-radius:24px;box-shadow:0 12px 34px rgba(0,0,0,.10);}
+.home-balance-card .hero{font-size:clamp(2.15rem,5.5vw,3.65rem);line-height:1.08;letter-spacing:-.045em;font-weight:780;margin:12px 0 6px;overflow-wrap:anywhere;}
+.home-balance-top{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.home-balance-card .row{gap:16px;padding:9px 0;}
+.home-balance-card .row b:last-child,.home-balance-card .row span:last-child{text-align:right;font-variant-numeric:tabular-nums;}
+@media(max-width:600px){.home-balance-card{padding:20px;border-radius:20px}.home-balance-card .hero{font-size:clamp(2rem,10vw,3rem)}.home-balance-card .muted{line-height:1.5}}
 </style>
 </head>
 <body>
