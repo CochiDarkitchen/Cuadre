@@ -140,11 +140,11 @@
     if (/schema cache|does not exist|relation/i.test(m)) return 'Faltan las tablas en Supabase: ejecuta schema.sql completo en el SQL Editor. (' + m + ')';
     return m + (e && e.code ? ' [' + e.code + ']' : '');
   }
-  /* Tema: 'system' (como el dispositivo), 'light' o 'dark'. Se recuerda en este dispositivo. */
-  function readTheme() { try { var v = localStorage.getItem(THEME_KEY); return v === 'light' || v === 'dark' ? v : 'system'; } catch (e) { return 'system'; } }
+  /* Tema: 'system' (como el dispositivo), 'light' o 'dark'. Oscuro es el valor inicial de Cuadre. */
+  function readTheme() { try { var v = localStorage.getItem(THEME_KEY); return v === 'light' || v === 'system' || v === 'dark' ? v : 'dark'; } catch (e) { return 'dark'; } }
   function applyTheme(t) {
     var root = document.documentElement;
-    if (t === 'light' || t === 'dark') root.setAttribute('data-theme', t); else root.removeAttribute('data-theme');
+    if (t === 'light' || t === 'dark' || t === 'system') root.setAttribute('data-theme', t); else root.setAttribute('data-theme', 'dark');
     var metas = document.querySelectorAll('meta[name="theme-color"]');
     if (metas.length === 2) {
       metas[0].setAttribute('content', t === 'dark' ? '#0E1512' : '#F2F5F3');
@@ -152,7 +152,7 @@
     }
   }
   function setTheme(t) {
-    try { if (t === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch (e) { /* se aplica igual */ }
+    try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* se aplica igual */ }
     var root = document.documentElement;
     if (motionAllowed()) {
       root.classList.add('theme-animating'); clearTimeout(themeResetTimer);
@@ -163,7 +163,7 @@
   applyTheme(readTheme());
 
   function loadUiPrefs() {
-    var defaults = { fontSize: 'normal', hideBalances: false, reduceMotion: false, highContrast: false };
+    var defaults = { fontSize: 'normal', hideBalances: false, reduceMotion: false, highContrast: false, accent: 'menta', density: 'comoda' };
     try {
       var value = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || '{}');
       if (value && typeof value === 'object') {
@@ -171,6 +171,8 @@
         defaults.hideBalances = value.hideBalances === true;
         defaults.reduceMotion = value.reduceMotion === true;
         defaults.highContrast = value.highContrast === true;
+        if (['menta','esmeralda','azul'].indexOf(value.accent) >= 0) defaults.accent = value.accent;
+        if (['compacta','comoda'].indexOf(value.density) >= 0) defaults.density = value.density;
       }
     } catch (e) { /* usa las preferencias seguras por defecto */ }
     return defaults;
@@ -181,6 +183,8 @@
     root.setAttribute('data-font-size', uiPrefs.fontSize || 'normal');
     root.setAttribute('data-motion', uiPrefs.reduceMotion ? 'reduce' : 'system');
     root.setAttribute('data-contrast', uiPrefs.highContrast ? 'high' : 'normal');
+    root.setAttribute('data-accent', uiPrefs.accent || 'menta');
+    root.setAttribute('data-density', uiPrefs.density || 'comoda');
     root.classList.toggle('privacy-hidden', !!uiPrefs.hideBalances);
   }
   function saveUiPrefs() {
@@ -1556,6 +1560,8 @@
       var th = readTheme();
       return back + '<h1 class="h2">Apariencia y accesibilidad</h1>' + banners() +
         '<div class="card"><div class="label">Tema</div><div class="seg" role="group" aria-label="Tema"><button data-a="theme" data-v="system" aria-pressed="' + (th === 'system') + '">Sistema</button><button data-a="theme" data-v="light" aria-pressed="' + (th === 'light') + '">Claro</button><button data-a="theme" data-v="dark" aria-pressed="' + (th === 'dark') + '">Oscuro</button></div><div class="muted">Sistema sigue el modo de tu dispositivo. La elección se guarda en este navegador.</div></div>' +
+        '<div class="card"><div class="label">Color de acento</div><div class="seg" role="group" aria-label="Color de acento"><button data-a="pref-accent" data-v="menta" aria-pressed="' + (uiPrefs.accent === 'menta') + '">Menta</button><button data-a="pref-accent" data-v="esmeralda" aria-pressed="' + (uiPrefs.accent === 'esmeralda') + '">Esmeralda</button><button data-a="pref-accent" data-v="azul" aria-pressed="' + (uiPrefs.accent === 'azul') + '">Azul</button></div><div class="muted">Cambia el color de acciones, indicadores y elementos destacados en toda la aplicación.</div></div>' +
+        '<div class="card"><div class="label">Densidad de la interfaz</div><div class="seg" role="group" aria-label="Densidad de la interfaz"><button data-a="pref-density" data-v="comoda" aria-pressed="' + (uiPrefs.density === 'comoda') + '">Cómoda</button><button data-a="pref-density" data-v="compacta" aria-pressed="' + (uiPrefs.density === 'compacta') + '">Compacta</button></div><div class="muted">Cómoda deja más espacio para leer y tocar. Compacta muestra más información en pantalla.</div></div>' +
         '<div class="card"><div class="label">Tamaño de texto</div><div class="seg" role="group" aria-label="Tamaño de texto"><button data-a="pref-font" data-v="small" aria-pressed="' + (uiPrefs.fontSize === 'small') + '">Pequeño</button><button data-a="pref-font" data-v="normal" aria-pressed="' + (uiPrefs.fontSize === 'normal') + '">Normal</button><button data-a="pref-font" data-v="large" aria-pressed="' + (uiPrefs.fontSize === 'large') + '">Grande</button></div><div class="pref-preview">Este es un ejemplo de cómo se verá el texto en Cuadre.</div></div>' +
         '<div class="card pref-list"><label class="pref-row"><span><b>Ocultar saldos</b><span class="muted">Difumina los importes en pantalla cuando estés en público.</span></span><input type="checkbox" data-pref="hideBalances" ' + (uiPrefs.hideBalances ? 'checked' : '') + ' aria-label="Ocultar saldos"></label>' +
         '<label class="pref-row"><span><b>Reducir animaciones</b><span class="muted">Reduce transiciones y movimiento. También se respeta la preferencia del sistema.</span></span><input type="checkbox" data-pref="reduceMotion" ' + (uiPrefs.reduceMotion ? 'checked' : '') + ' aria-label="Reducir animaciones"></label>' +
@@ -2465,6 +2471,8 @@
       if (a === 'toggle-available-help') { showAvailableExplanation = !showAvailableExplanation; render(); return; }
       if (a === 'toggle-pref') { var pk = el.dataset.pref, inputPref = el.matches && el.matches('input') ? el : el.querySelector && el.querySelector('input[data-pref]'); if (['hideBalances','reduceMotion','highContrast'].indexOf(pk) >= 0) { uiPrefs[pk] = inputPref ? !!inputPref.checked : !uiPrefs[pk]; saveUiPrefs(); render(); } return; }
       if (a === 'pref-font') { uiPrefs.fontSize = ['small','normal','large'].indexOf(v) >= 0 ? v : 'normal'; saveUiPrefs(); render(); return; }
+      if (a === 'pref-accent') { uiPrefs.accent = ['menta','esmeralda','azul'].indexOf(v) >= 0 ? v : 'menta'; saveUiPrefs(); render(); return; }
+      if (a === 'pref-density') { uiPrefs.density = ['compacta','comoda'].indexOf(v) >= 0 ? v : 'comoda'; saveUiPrefs(); render(); return; }
       if (a === 'reset-onboarding' || a === 'start-onboarding-again') { try { localStorage.removeItem(onboardingDoneKey()); } catch (e) {} onboardingState = { step: 0, currency: S.displayCurrency || 'VES', focus: 'control' }; renderOnboardingOverlay(); return; }
       if (a === 'undo-tx') { await undoLastCreatedTx(); return; }
       if (a === 'favorite-tx') { var fi=favoriteIds.indexOf(id); if(fi>=0) favoriteIds.splice(fi,1); else favoriteIds.unshift(id); favoriteIds=favoriteIds.slice(0,100); saveFavorites(); render(); toast(fi>=0?'Quitado de favoritos':'Guardado en favoritos'); return; }
