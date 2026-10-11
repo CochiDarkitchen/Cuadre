@@ -749,12 +749,10 @@
     var month = today().slice(0, 7), sum = monthSummary(month, disp), total = totalAvailable(disp);
     var recent = sorted().slice(0, 5), h = '';
     h += '<div class="top"><div class="brand brand-lockup"><img src="icons/icon-192.png" alt="" width="36" height="36" aria-hidden="true"><span>Cuadre</span></div><div class="topr">' + rateChip() +
-      (CLOUD && user ? '<button class="avbtn" data-a="goto-profile" aria-label="Mi perfil">' + pic(S.profile && S.profile.avatar, (S.profile && S.profile.username) || user.email, 'sm') + '</button>' : '') + '</div></div>' + banners() + syncStatusHtml() + tipCardHtml();
+      (CLOUD && user ? '<button class="avbtn" data-a="goto-profile" aria-label="Mi perfil">' + pic(S.profile && S.profile.avatar, (S.profile && S.profile.username) || user.email, 'sm') + '</button>' : '') + '</div></div>' + banners() + tipCardHtml();
     if (rate <= 0) h += '<div class="banner">Aún no hay tasa del dólar. Toca el botón de arriba para definirla.</div>';
     var urg = urgent(), firm = urg.filter(function (i) { return i.level === 'late' || i.level === 'today'; });
     if (firm.length) h += '<button class="banner bad firm" data-a="goto-pay">⚠️ ' + (firm.length === 1 ? 'Atención: ' : 'Atención, ' + firm.length + ' pagos: ') + firm.slice(0, 2).map(function (i) { return esc(i.title) + (i.level === 'late' ? ' (vencido)' : ' (vence hoy)'); }).join(' · ') + (firm.length > 2 ? ' y más' : '') + '</button>';
-    h += '<section class="home-welcome"><div><div class="home-eyebrow">TU ESPACIO FINANCIERO</div><h1 class="h2">Tu dinero, en orden.</h1><p class="muted">Una mirada clara a cómo vas este mes.</p></div><button class="home-add" data-a="new" aria-label="Registrar movimiento"><span aria-hidden="true">＋</span><span>Registrar</span></button></section>';
-    h += '<div class="home-shortcuts" aria-label="Accesos rápidos"><button data-a="new"><span class="shortcut-icon">＋</span><span>Nuevo movimiento</span></button><button data-a="tab" data-v="moves"><span class="shortcut-icon">↕</span><span>Ver movimientos</span></button><button data-a="goto-pay"><span class="shortcut-icon">◷</span><span>Revisar pagos</span></button></div>';
     h += '<div class="seg home-currency" role="group" aria-label="Moneda a mostrar"><button data-a="disp" data-v="VES" aria-pressed="' + (disp === 'VES') + '">Bs · Bolívares</button><button data-a="disp" data-v="USD" aria-pressed="' + (disp === 'USD') + '">$ · Dólares</button></div>';
     var plan = availablePlan(disp), forecast = monthForecast(disp);
     h += '<div class="card home-balance-card"><div class="home-balance-top"><div class="label">Saldo total</div><span class="home-live-pill"><i></i> Tu resumen</span></div><div class="hero">' + fmt(total, disp) + '</div>' +
