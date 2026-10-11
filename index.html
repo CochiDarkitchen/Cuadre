@@ -211,9 +211,9 @@ body {
 #app.wrap, #app { width: min(100% - 32px, 980px); max-width: 980px; margin-inline: auto; padding: 30px 0 150px; gap: 18px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-size: 29px; letter-spacing: -.055em; }
 .brand::before {
-  content: "↗"; display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 13px;
-  color: var(--on-accent); background: linear-gradient(145deg, var(--accent), color-mix(in srgb, var(--accent) 72%, #0D4631));
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 22%, transparent); font-family: var(--font-body); font-size: 21px; font-weight: 800;
+  content: ""; display: inline-block; flex: 0 0 36px; width: 36px; height: 36px; border-radius: 12px;
+  background: url("icons/icon.svg") center / cover no-repeat;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .h2 { font-size: clamp(25px, 3vw, 32px); letter-spacing: -.045em; }
 .label { letter-spacing: .095em; font-size: 11px; }
@@ -299,7 +299,8 @@ body {
 #session-splash[hidden] { display: none; }
 #session-splash.is-leaving { opacity: 0; visibility: hidden; pointer-events: none; }
 .splash-content { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; animation: splash-arrive .48s cubic-bezier(.2,.75,.25,1) both; }
-.splash-mark { display: grid; place-items: center; width: 76px; height: 76px; border-radius: 25px; background: var(--accent); color: var(--on-accent); font-family: var(--font-display); font-size: 43px; font-weight: 800; letter-spacing: -.08em; box-shadow: 0 12px 34px color-mix(in srgb, var(--accent) 25%, transparent); }
+.splash-mark { display: block; width: 96px; height: 96px; object-fit: contain; border-radius: 26px; box-shadow: 0 12px 34px color-mix(in srgb, var(--accent) 18%, transparent); animation: splash-logo-breathe 1.8s ease-in-out infinite; }
+@keyframes splash-logo-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.045); } }
 .splash-wordmark { font-family: var(--font-display); font-size: 35px; font-weight: 800; letter-spacing: -.06em; }
 .splash-caption { color: var(--muted); font-size: 13px; }
 .splash-dots { display: flex; gap: 6px; margin-top: 6px; }
@@ -487,7 +488,7 @@ html.privacy-hidden #app .hero:hover, html.privacy-hidden #app .num:hover, html.
 <body>
 <div id="session-splash" hidden aria-live="polite" aria-label="Abriendo Cuadre">
   <div class="splash-content">
-    <div class="splash-mark" aria-hidden="true">C</div>
+    <img class="splash-mark" src="icons/icon-192.png" alt="" aria-hidden="true">
     <div class="splash-wordmark">Cuadre</div>
     <div class="splash-caption">Tus finanzas, con claridad.</div>
     <div class="splash-dots" aria-hidden="true"><i></i><i></i><i></i></div>
