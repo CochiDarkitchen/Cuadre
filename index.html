@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Cuadre — Tus finanzas, con claridad</title>
+<title>Cuadre Premium — Tus finanzas, con claridad</title>
 <meta name="description" content="Cuadre: controla tu dinero disponible, presupuestos, metas y gastos en bolívares y dólares.">
 <meta name="application-name" content="Cuadre">
 <meta name="color-scheme" content="light dark">
@@ -481,6 +481,49 @@ html.privacy-hidden #app .hero:hover, html.privacy-hidden #app .num:hover, html.
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto !important; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+
+/* Cuadre Premium 2.0 — refinamiento UX: escritorio, jerarquía y marca. */
+.brand-lockup { display:inline-flex; align-items:center; gap:10px; }
+.brand-lockup::before { display:none !important; }
+.brand-lockup img { display:block; width:38px; height:38px; border-radius:12px; flex:none; box-shadow:0 5px 16px color-mix(in srgb,var(--accent) 18%,transparent); }
+.top { padding-bottom:2px; }
+.top .brand { font-size:clamp(24px,3vw,30px); }
+#app .card { transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease; }
+#app .card:focus-within { border-color:color-mix(in srgb,var(--accent) 48%,var(--line)); }
+#app .hero { letter-spacing:-.045em; }
+#app .label { line-height:1.5; }
+#app .empty { border:1px dashed var(--line); border-radius:var(--r-lg); background:color-mix(in srgb,var(--surface) 68%,transparent); }
+#app .tx:hover, #app .link:hover { border-color:color-mix(in srgb,var(--accent) 48%,var(--line)); }
+#app .btn:not(:disabled):active, #app .nav button:active { transform:scale(.985); }
+@media (min-width: 900px) {
+  body { padding-left:236px; padding-right:28px; }
+  #app.wrap, #app { width:min(100%, 1120px); max-width:1120px; padding:34px 0 48px; }
+  #app .top { margin-bottom:4px; }
+  #app .top .brand-lockup img { width:42px;height:42px;border-radius:14px; }
+  #app .card { border-radius:24px; }
+  #app .hero { font-size:clamp(42px,4vw,56px); }
+  #app .top + .banner, #app .top + .sync-status { margin-top:0; }
+  .nav { left:0; right:auto; top:0; bottom:0; width:208px; border-top:0; border-right:1px solid var(--line); padding:28px 14px; align-items:flex-start; justify-content:flex-start; }
+  .nav .in { width:100%; max-width:none; display:flex; flex-direction:column; align-items:stretch; gap:8px; }
+  .nav button { flex-direction:row; justify-content:flex-start; text-align:left; padding:0 16px; min-height:52px; gap:12px; font-size:14px; border-radius:15px; }
+  .nav button .e { width:24px; text-align:center; }
+  .nav .plus { order:0; width:100%; height:52px; min-height:52px; margin:0 0 14px; border-radius:16px; font-size:26px; }
+  .nav button[aria-current="page"] { box-shadow:inset 3px 0 0 var(--accent); }
+  .nav .dot { top:10px; right:12px; }
+  #app .grid2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #app .tx-row-wrap { min-width:0; }
+}
+@media (min-width: 1200px) {
+  #app.wrap, #app { width:min(100%, 1200px); max-width:1200px; }
+  #app .top + .card, #app .top + .banner + .card { max-width:none; }
+}
+@media (max-width:899px) {
+  .brand-lockup img { width:36px;height:36px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #app .card, #app .btn, #app .nav button { transition:none!important; }
 }
 
 </style>
