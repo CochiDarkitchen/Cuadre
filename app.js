@@ -33,6 +33,8 @@
   var DEMO_KEY = 'cuadre:demo:v1';
   var SYNC_KEY = 'cuadre:last-sync:v1';
   var UI_PREFS_KEY = 'cuadre:ui-prefs:v1';
+  var HOME_PREFS_KEY = 'cuadre:home-prefs:v1';
+  var FAVORITES_KEY = 'cuadre:favorites:v1';
   var DISPLAY_KEY = 'cuadre:display';
   var THEME_KEY = 'cuadre:theme';
   var RATE_URL = 'https://ve.dolarapi.com/v1/dolares/oficial';
@@ -675,6 +677,11 @@
 
   /* ---------- 9. Vistas ---------- */
   var tab = 'home', sub = 'menu', query = '', filter = 'all', sheet = null, msg = null, topMsg = null, rateErr = null;
+  var universalQuery = '', calendarMonth = today().slice(0, 7);
+  var homePrefs = (function(){ try { return Object.assign({ compact: false, showTips: true }, JSON.parse(localStorage.getItem(HOME_PREFS_KEY) || '{}')); } catch(e) { return { compact:false, showTips:true }; } })();
+  var favoriteIds = (function(){ try { return JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]').filter(function(x){return typeof x === 'string';}); } catch(e) { return []; } })();
+  function saveHomePrefs(){ try { localStorage.setItem(HOME_PREFS_KEY, JSON.stringify(homePrefs)); } catch(e){} }
+  function saveFavorites(){ try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteIds)); } catch(e){} }
   var busy = false, msgOk = false, newAccCur = 'VES', newCatKind = 'expense', authMode = 'login', authMsg = null, authBusy = false;
   var arm = null, editAcc = null, profDraft = null, authDraft = { email: '', username: '' };
   var quickActionsOpen = false, lastMotionViewKey = null, motionResetTimer = null, themeResetTimer = null, heroAnimationFrame = null, motionRefreshRequested = false;
@@ -689,12 +696,15 @@
     var c = catById(t.categoryId), a = accById(t.accountId), other = t.currency === 'USD' ? 'VES' : 'USD', pos = t.type === 'income';
     var title = t.note || (c ? c.name : 'Sin categoría');
     var sub2 = t.note ? (c ? c.name : 'Sin categoría') : (a ? a.name : 'Sin cuenta');
-    return '<button class="tx" data-a="edit" data-id="' + esc(t.id) + '">' +
+    var fav = favoriteIds.indexOf(t.id) >= 0;
+    return '<div class="tx-row-wrap"><button class="tx" data-a="edit" data-id="' + esc(t.id) + '">' +
       '<span class="ico" aria-hidden="true">' + (c ? esc(c.icon) : '❔') + '</span>' +
       '<span class="mid"><b>' + esc(title) + '</b><span>' + esc(sub2) + ' · ' + shortDate(t.dateISO) + (t.split ? ' · 👥' : '') + (t.receiptImage ? ' · 🧾' : '') + '</span></span>' +
       '<span class="amt"><b class="' + (pos ? 'pos' : '') + '">' + (pos ? '+' : '-') + fmt(t.amountMinor, t.currency) + '</b>' +
-      '<span>≈ ' + fmt(convert(t.amountMinor, t.currency, other, t.rateE4), other) + '</span></span></button>';
+      '<span>≈ ' + fmt(convert(t.amountMinor, t.currency, other, t.rateE4), other) + '</span></span></button>' +
+      '<button class="tx-fav" data-a="favorite-tx" data-id="' + esc(t.id) + '" aria-label="' + (fav ? 'Quitar de favoritos' : 'Marcar como favorito') + '" aria-pressed="' + fav + '">' + (fav ? '★' : '☆') + '</button></div>';
   }
+
   function banners() {
     var h = '';
     if (demoMode) h += '<div class="banner demo-banner" role="status">🧪 Modo demostración: estos son datos ficticios y están separados de tus finanzas. <button class="retry" data-a="exit-demo">Salir de la demostración</button></div>';
@@ -716,7 +726,7 @@
   }
   function tipCardHtml() {
     var dismissed = false, focus = 'control'; try { dismissed = localStorage.getItem('cuadre:tip:transferencias:v1') === '1'; focus = localStorage.getItem('cuadre:onboarding:focus:' + (user ? user.id : 'local')) || 'control'; } catch (e) {}
-    if (dismissed || demoMode) return '';
+    if (dismissed || demoMode || !homePrefs.showTips) return '';
     var text = focus === 'saving' ? 'Una meta reserva una parte de tu dinero para un objetivo, pero no mueve fondos ni crea un gasto.' : focus === 'bills' ? 'Registrar una factura con vencimiento te ayuda a anticiparte; revisa Pagos para ver lo que vence pronto.' : 'Mover dinero entre tus propias cuentas es una transferencia, no un ingreso ni un gasto.';
     return '<div class="helper-tip"><div class="helper-tip-icon" aria-hidden="true">💡</div><div class="helper-tip-content"><b>Consejo de Cuadre</b><div class="muted">' + esc(text) + '</div><button class="linkbtn plain" data-a="sub" data-v="help">Ver guía rápida</button></div><button class="tip-dismiss" data-a="dismiss-tip" aria-label="Ocultar consejo">×</button></div>';
   }
@@ -748,8 +758,8 @@
       '<div class="muted">Estimación: saldo menos metas reservadas y obligaciones próximas. Las reservas no mueven dinero entre cuentas.</div>' +
       '<button class="linkbtn plain calc-toggle" data-a="toggle-available-help" aria-expanded="' + showAvailableExplanation + '">' + (showAvailableExplanation ? 'Ocultar cómo se calcula' : '¿Cómo se calcula?') + '</button>' +
       (showAvailableExplanation ? '<div class="calc-breakdown"><b>Cómo interpreta Cuadre tu dinero</b><div class="row"><span>Saldo convertido a ' + (disp === 'USD' ? 'dólares' : 'bolívares') + '</span><span>' + fmt(plan.balance, disp) + '</span></div><div class="row"><span>Metas reservadas</span><span>− ' + fmt(plan.goalsReserved, disp) + '</span></div><div class="row"><span>Obligaciones de los próximos 30 días</span><span>− ' + fmt(plan.obligations30, disp) + '</span></div><div class="row calc-result"><b>Disponible estimado</b><b>' + fmt(plan.available, disp) + '</b></div><div class="muted">Es una estimación de planificación, no un bloqueo de fondos ni un saldo bancario en tiempo real. Los importes en otra moneda dependen de la tasa que tenga Cuadre guardada.</div></div>' : '') + '</div>';
-    h += '<div class="card"><div class="label">Proyección al cierre del mes</div><div class="num">' + fmt(forecast.projectedBalance, disp) + '</div><div class="muted">Si mantienes el promedio neto diario de este mes: ' + (forecast.projectedChange >= 0 ? '+' : '−') + fmt(Math.abs(forecast.projectedChange), disp) + ' estimados en los ' + forecast.remainingDays + ' días restantes. Calculado con ' + forecast.sampleDays + ' día(s) de datos; no es una garantía.</div></div>';
-    h += '<div class="card"><div class="label">' + monthLabel(month) + '</div><div class="row"><div class="col"><span class="muted">Ingresos</span><span class="num pos">' + fmt(sum.inc, disp) +
+    if (!homePrefs.compact) h += '<div class="card" data-home-widget="projection"><div class="label">Proyección al cierre del mes</div><div class="num">' + fmt(forecast.projectedBalance, disp) + '</div><div class="muted">Si mantienes el promedio neto diario de este mes: ' + (forecast.projectedChange >= 0 ? '+' : '−') + fmt(Math.abs(forecast.projectedChange), disp) + ' estimados en los ' + forecast.remainingDays + ' días restantes. Calculado con ' + forecast.sampleDays + ' día(s) de datos; no es una garantía.</div></div>';
+    if (!homePrefs.compact) h += '<div class="card" data-home-widget="monthly-summary"><div class="label">' + monthLabel(month) + '</div><div class="row"><div class="col"><span class="muted">Ingresos</span><span class="num pos">' + fmt(sum.inc, disp) +
       '</span></div><div class="col" style="text-align:right"><span class="muted">Gastos</span><span class="num" style="color:var(--expense)">' + fmt(sum.exp, disp) + '</span></div></div>' +
       '<div class="muted">' + (sum.inc - sum.exp >= 0 ? 'Te queda a favor' : 'Gastaste de más') + ': ' + fmt(Math.abs(sum.inc - sum.exp), disp) + '</div></div>';
     if (sum.top.length) {
@@ -764,6 +774,8 @@
     if (urg.length) h += '<div class="label">Próximos pagos</div><div class="col" style="gap:8px">' + urg.slice(0, 4).map(itemRowHtml).join('') + (urg.length > 4 ? '<button class="linkbtn plain" data-a="goto-pay">Ver todos (' + urg.length + ')</button>' : '') + '</div>';
     var bl = S.budgets.slice().sort(function (a, b) { return budgetSpent(b) / b.limitMinor - budgetSpent(a) / a.limitMinor; }).slice(0, 3);
     if (bl.length) h += '<div class="label">Presupuestos</div><div class="col" style="gap:8px">' + bl.map(budgetRow).join('') + '</div>';
+    var favTx = favoriteIds.map(function(fid){return S.transactions.filter(function(t){return t.id===fid;})[0];}).filter(Boolean).slice(0,4);
+    if (favTx.length) h += '<div class="label">Tus movimientos favoritos</div><div class="col" style="gap:8px">' + favTx.map(txRow2).join('') + '</div>';
     h += '<div class="label">Recientes</div>';
     h += recent.length ? '<div class="col" style="gap:8px">' + recent.map(txRow2).join('') + '</div>'
       : '<div class="empty"><div class="big">✨</div><b>Aún no hay movimientos</b><span class="muted">Toca el botón + para registrar tu primer gasto o ingreso.</span></div>';
@@ -1413,10 +1425,53 @@
       '<div class="card"><div class="demo-mark">🧪</div><h2 class="h2">Explora Cuadre sin miedo</h2><div class="muted">Usa cuentas, movimientos, presupuestos y metas ficticios. Las operaciones realizadas durante la demostración se guardan en una zona local separada; no envían datos a Supabase ni modifican tus finanzas reales.</div><div class="muted">Salir vuelve a tus datos habituales. La demostración no representa recomendaciones de inversión ni saldos reales.</div><button class="btn" data-a="start-demo">Entrar a la demostración</button></div>';
   }
 
+  function viewUniversalSearch() {
+    var q = universalQuery.trim().toLowerCase();
+    var h = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Buscar en Cuadre</h1>' + banners() +
+      '<div class="card"><div class="field"><label class="label" for="universal-q">¿Qué quieres encontrar?</label><input id="universal-q" type="search" value="' + esc(universalQuery) + '" placeholder="Ej. supermercado, efectivo, meta equipo" autocomplete="off"></div><div class="muted">Busca en movimientos, cuentas, categorías, metas, pagos fijos y deudas.</div></div>';
+    if (!q) return h + '<div class="empty"><div class="big">🔎</div><b>Todo a tu alcance</b><span class="muted">Escribe una palabra o nombre para ver resultados.</span></div>';
+    var results = [];
+    S.transactions.forEach(function(t){ var c=catById(t.categoryId), a=accById(t.accountId), text=[t.note,c&&c.name,a&&a.name,t.type,t.dateISO,t.currency].join(' ').toLowerCase(); if(text.indexOf(q)>=0) results.push({kind:'Movimiento',title:t.note||(c?c.name:'Movimiento'),sub:(c?c.name:'Sin categoría')+' · '+shortDate(t.dateISO),amount:fmt(t.amountMinor,t.currency),act:'edit',id:t.id}); });
+    S.accounts.forEach(function(a){ if([a.name,a.currency].join(' ').toLowerCase().indexOf(q)>=0) results.push({kind:'Cuenta',title:a.name,sub:'Cuenta '+(a.currency==='USD'?'en dólares':'en bolívares'),amount:fmt(balance(a),a.currency),act:'search-account',id:a.id}); });
+    S.categories.forEach(function(c){ if([c.name,c.kind].join(' ').toLowerCase().indexOf(q)>=0) results.push({kind:'Categoría',title:c.icon+' '+c.name,sub:c.kind==='income'?'Ingresos':'Gastos',amount:'',act:'search-category',id:c.id}); });
+    (S.goals||[]).forEach(function(g){ if([g.name,g.note,g.currency].join(' ').toLowerCase().indexOf(q)>=0) results.push({kind:'Meta',title:g.name,sub:'Meta de ahorro',amount:fmt(g.savedMinor||0,g.currency)+' / '+fmt(g.targetMinor,g.currency),act:'search-goal',id:g.id}); });
+    (S.scheduled||[]).forEach(function(x){ if([x.name,x.note].join(' ').toLowerCase().indexOf(q)>=0) results.push({kind:'Pago fijo',title:x.name,sub:'Próximo: '+dueLabel(x.nextDue),amount:fmt(x.amountMinor,x.currency),act:'search-pay',id:x.id}); });
+    (S.debts||[]).forEach(function(d){ if([d.person,d.note].join(' ').toLowerCase().indexOf(q)>=0) results.push({kind:'Deuda',title:d.person,sub:d.kind==='owe'?'Debes':'Te deben',amount:fmt(debtLeft(d),d.currency),act:'search-debt',id:d.id}); });
+    if(!results.length) return h+'<div class="empty"><div class="big">🫧</div><b>No encontré coincidencias</b><span class="muted">Prueba con otro nombre, categoría o descripción.</span></div>';
+    h += '<div class="label">'+results.length+' resultado(s)</div><div class="col" style="gap:8px">'+results.slice(0,80).map(function(r){return '<button class="tx" data-a="'+r.act+'" data-id="'+esc(r.id)+'"><span class="ico">'+(r.kind==='Movimiento'?'↕️':r.kind==='Cuenta'?'🏦':r.kind==='Meta'?'🎯':r.kind==='Pago fijo'?'🔁':r.kind==='Deuda'?'🤝':'🏷️')+'</span><span class="mid"><b>'+esc(r.title)+'</b><span>'+esc(r.kind)+' · '+esc(r.sub)+'</span></span><span class="amt"><b>'+esc(r.amount)+'</b></span></button>';}).join('')+'</div>';
+    if(results.length>80) h+='<div class="muted">Mostrando los primeros 80 resultados. Afina la búsqueda para encontrar algo concreto.</div>';
+    return h;
+  }
+  function viewCalendar() {
+    var month = /^\d{4}-\d{2}$/.test(calendarMonth) ? calendarMonth : today().slice(0,7), from=month+'-01', to=month+'-'+p2(new Date(+month.slice(0,4),+month.slice(5,7),0).getDate());
+    var events=[];
+    S.transactions.forEach(function(t){ if(t.dateISO>=from && t.dateISO<=to) events.push({date:t.dateISO,title:t.note||(catById(t.categoryId)||{}).name||'Movimiento',kind:t.type==='income'?'Ingreso':'Gasto',amount:fmt(t.amountMinor,t.currency),id:t.id,act:'edit',icon:t.type==='income'?'↙️':'↗️'}); });
+    (S.scheduled||[]).forEach(function(x){if(x.active && x.nextDue>=from && x.nextDue<=to) events.push({date:x.nextDue,title:x.name,kind:'Pago previsto',amount:fmt(x.amountMinor,x.currency),id:x.id,act:'edit-sch',icon:'🔁'});});
+    (S.plans||[]).forEach(function(x){var d=planDue(x);if(x.paidCount<x.count && d>=from && d<=to) events.push({date:d,title:x.name+' · cuota '+(x.paidCount+1),kind:'Cuota',amount:fmt(planAmount(x,x.paidCount),x.currency),id:x.id,act:'edit-plan',icon:'🛍️'});});
+    events.sort(function(a,b){return a.date.localeCompare(b.date)||a.title.localeCompare(b.title);});
+    var sumInc=0,sumExp=0; S.transactions.forEach(function(t){if(t.dateISO>=from&&t.dateISO<=to){if(t.type==='income')sumInc+=convert(t.amountMinor,t.currency,S.displayCurrency,t.rateE4);else sumExp+=convert(myMinor(t),t.currency,S.displayCurrency,t.rateE4);}});
+    var h='<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Calendario financiero</h1>'+banners()+'<div class="card"><div class="field"><label class="label" for="calendar-month">Mes</label><input id="calendar-month" type="month" value="'+esc(month)+'"></div><div class="grid2"><div><div class="label">Ingresos registrados</div><b class="pos">'+fmt(sumInc,S.displayCurrency)+'</b></div><div><div class="label">Gastos registrados</div><b>'+fmt(sumExp,S.displayCurrency)+'</b></div></div><div class="muted">Incluye movimientos registrados, pagos fijos y próximas cuotas. Las fechas futuras son compromisos previstos, no cargos bancarios confirmados.</div></div>';
+    if(!events.length) return h+'<div class="empty"><div class="big">🗓️</div><b>Mes tranquilo</b><span class="muted">No hay movimientos ni pagos previstos en este mes.</span></div>';
+    var grouped={}; events.forEach(function(e){(grouped[e.date]||(grouped[e.date]=[])).push(e);});
+    Object.keys(grouped).sort().forEach(function(date){h+='<div class="label">'+new Date(date+'T12:00:00').toLocaleDateString('es-VE',{weekday:'long',day:'numeric',month:'long'})+'</div><div class="col" style="gap:8px">'+grouped[date].map(function(e){return '<button class="tx" data-a="'+e.act+'" data-id="'+esc(e.id)+'"><span class="ico">'+e.icon+'</span><span class="mid"><b>'+esc(e.title)+'</b><span>'+esc(e.kind)+'</span></span><span class="amt"><b>'+esc(e.amount)+'</b></span></button>';}).join('')+'</div>';});
+    return h;
+  }
+  function viewHomeSettings() {
+    return '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Personalizar inicio</h1>'+banners()+'<div class="card"><div class="label">Cantidad de información</div><label class="pref-row"><span><b>Vista compacta</b><span class="muted">Oculta proyección y resumen mensual de la pantalla Inicio para dejar más espacio a lo esencial.</span></span><input type="checkbox" data-home-pref="compact" '+(homePrefs.compact?'checked':'')+'></label><label class="pref-row"><span><b>Consejos de Cuadre</b><span class="muted">Muestra pequeños consejos para entender transferencias, metas y pagos.</span></span><input type="checkbox" data-home-pref="showTips" '+(homePrefs.showTips?'checked':'')+'></label><button class="btn quiet" data-a="home-prefs-reset">Restablecer preferencias de inicio</button></div><div class="card"><b>Consejo</b><div class="muted">Puedes cambiar estas opciones cuando quieras. No modifican tus movimientos, cuentas ni cálculos.</div></div>';
+  }
+  function viewSecurityCenter() {
+    var cloudText=CLOUD&&user?'Sesión iniciada en Supabase. Los cambios se sincronizan cuando hay conexión.':'Modo local en este navegador. Si borras los datos del navegador podrías perder tu información.';
+    return '<button class="back" data-a="sub" data-v="menu">‹ Volver</button><h1 class="h2">Privacidad y seguridad</h1>'+banners()+'<div class="card"><div class="label">Estado de almacenamiento</div>'+syncStatusHtml()+'<div class="muted">'+esc(cloudText)+'</div></div><div class="card"><div class="label">Recomendaciones</div><ul><li>Descarga copias JSON periódicamente y guárdalas fuera del dispositivo.</li><li>No compartas capturas con saldos, correos ni códigos de recuperación visibles.</li><li>Usa una contraseña única y cierra sesión en equipos compartidos.</li><li>Ocultar saldos es solo una ayuda visual; no protege la cuenta si otra persona tiene acceso al dispositivo desbloqueado.</li></ul></div><button class="btn" data-a="sub" data-v="backup">Abrir copias de seguridad</button><button class="btn quiet" data-a="sub" data-v="theme">Privacidad visual y accesibilidad</button>'+(CLOUD&&user?'<button class="btn quiet" data-a="logout">Cerrar sesión en este dispositivo</button>':'');
+  }
+
   function viewMore() {
     if (sub === 'menu') {
       var r = S.rate.rateE4;
       var items = [
+        ['search', '🔎', 'Buscar en Cuadre', 'Movimientos, cuentas, categorías y metas'],
+        ['calendar', '🗓️', 'Calendario financiero', 'Movimientos y compromisos por fecha'],
+        ['home-settings', '🧩', 'Personalizar inicio', 'Ajusta la vista a tu manera'],
+        ['security', '🛡️', 'Privacidad y seguridad', 'Sincronización, copias y privacidad'],
         ['accounts', '🏦', 'Cuentas', S.accounts.length + ' cuentas'],
         ['cats', '🏷️', 'Categorías', S.categories.length + ' categorías'],
         ['budgets', '🎯', 'Presupuestos', S.budgets.length ? S.budgets.length + (S.budgets.length === 1 ? ' activo' : ' activos') : 'Pon límites por categoría'],
@@ -1448,6 +1503,10 @@
     }
     var back = '<button class="back" data-a="sub" data-v="menu">‹ Volver</button>';
     if (sub === 'help') return viewHelp();
+    if (sub === 'search') return viewUniversalSearch();
+    if (sub === 'calendar') return viewCalendar();
+    if (sub === 'home-settings') return viewHomeSettings();
+    if (sub === 'security') return viewSecurityCenter();
     if (sub === 'demo') return viewDemo();
     if (sub === 'budgets') return viewBudgets();
     if (sub === 'remind') return viewRemind();
@@ -2341,6 +2400,7 @@
   /* ---------- 14. Eventos ---------- */
   document.addEventListener('change', function (ev) {
     var prefInput = ev.target;
+    if (prefInput && prefInput.dataset && prefInput.dataset.homePref) { var hk=prefInput.dataset.homePref; if (hk==='compact'||hk==='showTips') { homePrefs[hk]=!!prefInput.checked; saveHomePrefs(); render(); } return; }
     if (!prefInput || !prefInput.dataset || !prefInput.dataset.pref) return;
     var prefName = prefInput.dataset.pref;
     if (['hideBalances','reduceMotion','highContrast'].indexOf(prefName) < 0) return;
@@ -2352,6 +2412,8 @@
     if (t.dataset && t.dataset.fd && fd) { fd[t.dataset.fd] = t.value; return; }
     if (t.dataset && t.dataset.sp && sheet && sheet.split) { var q2 = t.dataset.sp.split(':'); sheet.split.people[+q2[0]][q2[1]] = t.value; return; }
     if (t.id === 'q') { query = t.value; var l = document.getElementById('list'); if (l) l.innerHTML = movesList(); return; }
+    if (t.id === 'universal-q') { universalQuery = t.value; var pos=t.selectionStart; render(); var uq=document.getElementById('universal-q'); if(uq){uq.focus();try{uq.setSelectionRange(pos,pos);}catch(e){}} return; }
+    if (t.id === 'calendar-month') { calendarMonth = /^\d{4}-\d{2}$/.test(t.value) ? t.value : today().slice(0,7); render(); return; }
     if (t.id === 'en' && editAcc) { editAcc.name = t.value; return; }
     if (t.id === 'pu' && profDraft) { profDraft.username = t.value; return; }
     if (t.id === 'assistant-query') { assistantQuestion = t.value; return; }
@@ -2405,12 +2467,19 @@
       if (a === 'pref-font') { uiPrefs.fontSize = ['small','normal','large'].indexOf(v) >= 0 ? v : 'normal'; saveUiPrefs(); render(); return; }
       if (a === 'reset-onboarding' || a === 'start-onboarding-again') { try { localStorage.removeItem(onboardingDoneKey()); } catch (e) {} onboardingState = { step: 0, currency: S.displayCurrency || 'VES', focus: 'control' }; renderOnboardingOverlay(); return; }
       if (a === 'undo-tx') { await undoLastCreatedTx(); return; }
+      if (a === 'favorite-tx') { var fi=favoriteIds.indexOf(id); if(fi>=0) favoriteIds.splice(fi,1); else favoriteIds.unshift(id); favoriteIds=favoriteIds.slice(0,100); saveFavorites(); render(); toast(fi>=0?'Quitado de favoritos':'Guardado en favoritos'); return; }
       if (a === 'remove-receipt') { if (sheet) { sheet.receiptImage = ''; renderSheet(false); } return; }
       if (a === 'repeat-tx') { if (sheet) { var oldSheet = sheet; sheet = Object.assign({}, oldSheet, { id: null, dateMode: 'today', customDate: today(), receiptImage: '', errors: {}, confirmDelete: false, saving: false, pay: null }); renderSheet(false); toast('Movimiento listo para repetir. Revisa el monto y guárdalo.'); } return; }
       if (a === 'tab') { quickActionsOpen = false; arm = null; fd = null; tab = v; sub = 'menu'; msg = null; topMsg = null; render(); window.scrollTo(0, 0); return; }
       if (a === 'goto-profile') { tab = 'more'; sub = 'profile'; msg = null; startProfileDraft(); render(); window.scrollTo(0, 0); return; }
       if (a === 'goto-rate') { tab = 'more'; sub = 'rate'; msg = null; render(); window.scrollTo(0, 0); return; }
       if (a === 'sub') { arm = null; sub = v; msg = null; topMsg = null; rateErr = null; if (v === 'profile') startProfileDraft(); render(); window.scrollTo(0, 0); return; }
+      if (a === 'search-account') { tab='more'; sub='accounts'; render(); return; }
+      if (a === 'search-category') { tab='more'; sub='cats'; render(); return; }
+      if (a === 'search-goal') { tab='more'; sub='goals'; render(); return; }
+      if (a === 'search-pay') { tab='pay'; ptab='sch'; sub='menu'; render(); return; }
+      if (a === 'search-debt') { tab='pay'; ptab='debt'; sub='menu'; render(); return; }
+      if (a === 'home-prefs-reset') { homePrefs={compact:false,showTips:true}; saveHomePrefs(); render(); return; }
       if (a === 'theme') { setTheme(v); render(); return; }
       if (a === 'edit-acc') { arm = null; var ea0 = accById(id); if (!ea0) return; editAcc = { id: id, name: ea0.name, logo: ea0.logo || '', msg: null, saving: false }; sub = 'acc-edit'; render(); window.scrollTo(0, 0); return; }
       if (a === 'rm-logo') { editAcc.logo = ''; render(); return; }
