@@ -2648,7 +2648,18 @@
       '<button class="btn quiet" data-a="start-demo">Explorar con datos de ejemplo</button><div class="muted auth-note">La demostración funciona sin iniciar sesión y no modifica tus datos reales.</div>' +
       (CLOUD && sb ? '<button class="btn quiet" data-a="logout">Cerrar sesión</button>' : '') + '</div>';
   }
-  async function startApp() {
+  function showSessionSplash() {
+    var splash = document.getElementById('session-splash');
+    if (splash) { splash.hidden = false; splash.classList.remove('is-leaving'); }
+  }
+  function hideSessionSplash() {
+    var splash = document.getElementById('session-splash');
+    if (!splash || splash.hidden) return;
+    splash.classList.add('is-leaving');
+    window.setTimeout(function () { splash.hidden = true; splash.classList.remove('is-leaving'); }, window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 240);
+  }
+  async function startApp(withWelcome) {
+    if (withWelcome) showSessionSplash();
     if (!CLOUD) {
       S = localLoad(); offline = false;
       render(); autoRate(); autoRefs(); notifyOnOpen(); return;
@@ -2660,9 +2671,9 @@
     } catch (e) {
       var cached = cacheLoad();
       if (cached) { S = cached; offline = true; }
-      else { S = null; renderFatal('No se pudieron cargar tus datos. ' + loadError(e), true); return; }
+      else { S = null; hideSessionSplash(); renderFatal('No se pudieron cargar tus datos. ' + loadError(e), true); return; }
     }
-    render(); autoRate(); autoRefs(); notifyOnOpen();
+    render(); hideSessionSplash(); autoRate(); autoRefs(); notifyOnOpen();
   }
   async function boot() {
     if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
@@ -2678,7 +2689,7 @@
       if (event === 'PASSWORD_RECOVERY') { user = sessionInfo && sessionInfo.user ? sessionInfo.user : null; authMode = 'updatePassword'; authMsg = null; renderAuth(); return; }
       if (event === 'SIGNED_OUT' && user) { user = null; S = null; authMode = 'login'; renderAuth(); }
     });
-    if (session) { user = session.user; if (recoveryLink) { authMode = 'updatePassword'; authMsg = null; renderAuth(); } else await startApp(); } else renderAuth();
+    if (session) { user = session.user; if (recoveryLink) { authMode = 'updatePassword'; authMsg = null; renderAuth(); } else await startApp(true); } else renderAuth();
   }
   // Se expone solo lo necesario para las pruebas automáticas.
   applyUiPrefs();
