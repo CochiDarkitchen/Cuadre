@@ -249,6 +249,9 @@ body {
 .auth .field input { min-height: 56px; }
 .auth .switch { min-height: 44px; border-radius: 12px; font-weight: 750; }
 .auth .switch:hover { background: var(--surface-2); }
+.auth .otp-input { text-align: center; font-size: 1.35rem; font-weight: 800; letter-spacing: .3em; font-variant-numeric: tabular-nums; }
+.auth .otp-input::placeholder { letter-spacing: normal; font-size: .95rem; font-weight: 500; }
+
 .nav {
   background: color-mix(in srgb, var(--surface) 91%, transparent); border: 1px solid var(--line);
   box-shadow: 0 12px 40px rgba(11, 30, 19, .12); backdrop-filter: blur(18px);
@@ -370,7 +373,7 @@ html.theme-animating .auth, html.theme-animating .banner, html.theme-animating .
 }
 
 
-/* Cuadre v0.8 · bienvenida, demostración y accesibilidad */
+/* Cuadre v0.9 · recuperación por código, bienvenida y accesibilidad */
 .sync-status { display:flex; flex-wrap:wrap; align-items:center; gap:8px; border:1px solid var(--line); border-radius:999px; padding:8px 12px; color:var(--muted); background:color-mix(in srgb,var(--surface) 88%,transparent); font-size:12px; font-weight:700; }
 .sync-dot { width:8px;height:8px;border-radius:50%;background:#28A879;box-shadow:0 0 0 3px color-mix(in srgb,#28A879 16%,transparent);flex:none; }
 .sync-dot.local-dot { background:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 15%,transparent); }
