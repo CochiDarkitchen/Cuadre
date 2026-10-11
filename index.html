@@ -526,6 +526,79 @@ html.privacy-hidden #app .hero:hover, html.privacy-hidden #app .num:hover, html.
   #app .card, #app .btn, #app .nav button { transition:none!important; }
 }
 
+
+/* Cuadre Premium 2.1 — refinamiento visual y usabilidad */
+:root {
+  --r-sm: 13px; --r-md: 19px; --r-lg: 25px;
+  --shadow: 0 10px 28px rgba(20,32,27,.09);
+  --focus-ring: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+body {
+  background-image: radial-gradient(ellipse at 8% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 34rem);
+  background-attachment: fixed;
+}
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button { transition: background-color .18s ease, border-color .18s ease, color .18s ease, transform .18s ease, box-shadow .18s ease; }
+button:active { transform: translateY(1px) scale(.99); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; box-shadow: 0 0 0 5px var(--focus-ring); }
+.card {
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--fg) 3%, transparent);
+  transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+.card:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); box-shadow: var(--shadow); }
+.h2 { line-height: 1.15; text-wrap: balance; }
+.label { letter-spacing: .075em; }
+input, select, textarea {
+  border-radius: 13px;
+  transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: none;
+}
+.chip-rate, .seg, .pill, .badge { transition: background-color .18s ease, color .18s ease; }
+/* Aumenta claridad y jerarquía en el panel principal sin alterar sus datos. */
+#app .top { padding-block: 3px 5px; }
+#app .brand-lockup { gap: 11px; }
+#app .brand-lockup img { object-fit: contain; filter: drop-shadow(0 3px 7px color-mix(in srgb, var(--accent) 15%, transparent)); }
+#app .hero { letter-spacing: -.045em; }
+#app .nav button { transition: background-color .18s ease, color .18s ease, transform .18s ease; }
+#app .nav button:hover { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+#app .nav button[aria-current="page"] { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); color: var(--fg); }
+#app .btn, #app button.primary, #app .primary {
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 17%, transparent);
+}
+#app .btn:hover, #app button.primary:hover, #app .primary:hover { box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 23%, transparent); }
+#app .tx-row-wrap { border-radius: 15px; transition: background-color .18s ease; }
+#app .tx-row-wrap:hover { background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+/* Transiciones suaves al cambiar de sección; respeta la preferencia del sistema. */
+@keyframes cuadre-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+#app .card { animation: cuadre-enter .28s ease both; }
+#app .card:nth-of-type(2) { animation-delay: .025s; }
+#app .card:nth-of-type(3) { animation-delay: .05s; }
+@media (min-width: 900px) {
+  body { padding-inline: 28px; }
+  #app.wrap, #app { padding-top: 30px; }
+  #app .card { padding: 22px; }
+  #app .top { margin-bottom: 5px; }
+}
+@media (max-width: 600px) {
+  body { padding-inline: 12px; }
+  .wrap { gap: 13px; padding-top: 15px; }
+  .card { padding: 16px; border-radius: 21px; }
+  .h2 { font-size: clamp(21px, 6vw, 25px); }
+  .chip-rate { padding-inline: 11px; }
+  #app .nav { padding-bottom: max(7px, env(safe-area-inset-bottom)); }
+  #app .nav button { min-height: 47px; }
+}
+@media (hover: none) {
+  .card:hover { box-shadow: 0 1px 0 color-mix(in srgb, var(--fg) 3%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
+
 </style>
 </head>
 <body>
