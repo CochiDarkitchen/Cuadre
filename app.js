@@ -2287,7 +2287,8 @@
   async function fetchBcvFrom(url, primary) {
     var ctrl = new AbortController(), timer = setTimeout(function () { ctrl.abort(); }, 10000);
     try {
-      var r = await fetch(url, { signal: ctrl.signal, cache: 'no-store', headers: { 'Accept': 'application/json' } });
+      var requestUrl = url + (url.indexOf('?') >= 0 ? '&' : '?') + '_cuadre=' + Date.now();
+      var r = await fetch(requestUrl, { signal: ctrl.signal, cache: 'no-store', headers: { 'Accept': 'application/json' } });
       if (!r.ok) throw new Error('El servicio respondió ' + r.status);
       var j = await r.json(), v, updatedAt, effectiveDate;
       if (primary) {
