@@ -37,7 +37,12 @@
   var FAVORITES_KEY = 'cuadre:favorites:v1';
   var DISPLAY_KEY = 'cuadre:display';
   var THEME_KEY = 'cuadre:theme';
-  var RATE_URL = 'https://ve.dolarapi.com/v1/dolares/oficial';
+  // Fuente con fecha de vigencia y captura; respaldo si el servicio principal falla.
+  var RATE_URL = 'https://bcv.today/api/v1/rate.json';
+  var RATE_FALLBACK_URL = 'https://ve.dolarapi.com/v1/dolares/oficial';
+  var RATE_REFRESH_MS = 30 * 60 * 1000;
+  var rateRefreshTimer = null;
+  var rateFetchInFlight = false;
 
   /* ---------- 2. Dinero en enteros (centavos). Nunca decimales flotantes. ---------- */
   function mulDivRound(a, b, c) {
@@ -1603,7 +1608,7 @@
     }
     if (sub === 'rate') {
       var rr = S.rate, srcTxt = rr.source === 'bcv' ? 'Actualizada automáticamente' : rr.source === 'manual' ? 'Escrita a mano' : 'Todavía no hay tasa';
-      var when = rr.updatedAt && !isNaN(new Date(rr.updatedAt)) ? ' · ' + new Date(rr.updatedAt).toLocaleDateString('es-VE') : '';
+      var when = rr.effectiveDate ? ' · Vigente desde ' + new Date(rr.effectiveDate + 'T12:00:00').toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' }) : (rr.updatedAt && !isNaN(new Date(rr.updatedAt)) ? ' · Consultada ' + new Date(rr.updatedAt).toLocaleDateString('es-VE') : '');
       return back + '<h1 class="h2">Tasa del dólar</h1>' + banners() + '<div class="card"><div class="label">Dólar oficial (BCV)</div><div class="hero">' + (rr.rateE4 > 0 ? 'Bs ' + fmtRate(rr.rateE4) : 'Sin definir') +
         '</div><div class="muted">' + srcTxt + (rr.rateE4 > 0 ? when : '') + '</div></div>' +
         (msg ? '<div class="banner bad" role="alert">' + esc(msg) + '</div>' : '') +
@@ -1611,7 +1616,7 @@
         '<div class="card"><div class="label">Escribirla a mano</div><div class="field"><input id="rm" inputmode="decimal" placeholder="Ej. 873,87" aria-label="Tasa a mano" autocomplete="off"></div>' +
         (rateErr ? '<div class="err" role="alert">' + esc(rateErr) + '</div>' : '') +
         '<button class="btn quiet" data-a="save-rate">Guardar tasa</button></div>' +
-        '<div class="muted">Cada movimiento guarda la tasa del día en que lo registras, así tu historial no cambia cuando sube el dólar.</div>' + refCards();
+        '<div class="muted">Cuadre consulta automáticamente la tasa al abrir la app, al volver a ella y cada 30 minutos. Se muestra la fecha de vigencia publicada por la fuente; fines de semana y feriados puede mantenerse la última tasa oficial válida. Cada movimiento conserva la tasa aplicada al registrarlo.</div>' + refCards();
     }
     if (sub === 'backup') {
       var hb = back + '<h1 class="h2">' + (CLOUD ? 'Copias e importación' : 'Copia de seguridad') + '</h1>' + banners() +
@@ -2279,15 +2284,28 @@
   }
 
   /* ---------- 12. Tasa BCV ---------- */
-  async function fetchBcv() {
-    var ctrl = new AbortController(), timer = setTimeout(function () { ctrl.abort(); }, 8000);
+  async function fetchBcvFrom(url, primary) {
+    var ctrl = new AbortController(), timer = setTimeout(function () { ctrl.abort(); }, 10000);
     try {
-      var r = await fetch(RATE_URL, { signal: ctrl.signal });
+      var r = await fetch(url, { signal: ctrl.signal, cache: 'no-store', headers: { 'Accept': 'application/json' } });
       if (!r.ok) throw new Error('El servicio respondió ' + r.status);
-      var j = await r.json(), v = Number(j.promedio);
+      var j = await r.json(), v, updatedAt, effectiveDate;
+      if (primary) {
+        v = Number(j.USD);
+        updatedAt = typeof j.updated_at === 'string' ? j.updated_at : new Date().toISOString();
+        effectiveDate = typeof j.effective_date === 'string' ? j.effective_date : (typeof j.date === 'string' ? j.date : '');
+      } else {
+        v = Number(j.promedio);
+        updatedAt = typeof j.fechaActualizacion === 'string' ? j.fechaActualizacion : new Date().toISOString();
+        effectiveDate = typeof j.fechaActualizacion === 'string' ? j.fechaActualizacion.slice(0, 10) : '';
+      }
       if (!isFinite(v) || v <= 0) throw new Error('La respuesta no trae una tasa válida');
-      return { rateE4: Math.round(v * 10000), updatedAt: typeof j.fechaActualizacion === 'string' ? j.fechaActualizacion : new Date().toISOString(), source: 'bcv' };
+      return { rateE4: Math.round(v * 10000), updatedAt: updatedAt, effectiveDate: effectiveDate, source: 'bcv' };
     } finally { clearTimeout(timer); }
+  }
+  async function fetchBcv() {
+    try { return await fetchBcvFrom(RATE_URL, true); }
+    catch (primaryError) { return await fetchBcvFrom(RATE_FALLBACK_URL, false); }
   }
   async function applyRate(rate) {
     await B.saveRate(rate);
@@ -2309,16 +2327,38 @@
   function needsAutoRate() {
     var r = S.rate;
     if (!(r.rateE4 > 0) || !r.updatedAt) return true;
-    var d = new Date(r.updatedAt);
-    return isNaN(d) || iso(d) !== today();
+    // Una tasa publicada el viernes puede ser válida para el lunes: usar la fecha efectiva,
+    // no solo la fecha de captura, para decidir si hay que consultar otra vez.
+    var effective = r.effectiveDate || (r.updatedAt ? String(r.updatedAt).slice(0, 10) : '');
+    var now = new Date();
+    var todayLocal = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    return !effective || effective < todayLocal;
   }
-  async function autoRate() {
-    if (offline || !needsAutoRate()) return;
+  async function autoRate(force) {
+    if (offline || rateFetchInFlight || (!force && !needsAutoRate())) return;
+    rateFetchInFlight = true;
     try {
       var rate = await fetchBcv();
-      await applyRate(rate);
-      if (!sheet && tab === 'home') render();
-    } catch (e) { /* en silencio: se queda la última tasa */ }
+      // Evitar reescribir el historial si el proveedor devuelve exactamente la misma tasa.
+      var old = S.rate || {};
+      if (old.rateE4 !== rate.rateE4 || old.effectiveDate !== rate.effectiveDate || old.source !== 'bcv') {
+        await applyRate(rate);
+        if (!sheet && tab === 'home') render();
+      }
+    } catch (e) { /* se conserva la última tasa válida; se reintenta en el siguiente ciclo */ }
+    finally { rateFetchInFlight = false; }
+  }
+  function startRateAutoRefresh() {
+    if (rateRefreshTimer) clearInterval(rateRefreshTimer);
+    // Consulta al entrar y cada 30 min mientras la app permanece abierta.
+    autoRate(false);
+    rateRefreshTimer = setInterval(function () { autoRate(true); }, RATE_REFRESH_MS);
+    if (!window.__cuadreRateResumeBound) {
+      window.__cuadreRateResumeBound = true;
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) autoRate(true); });
+      window.addEventListener('online', function () { autoRate(true); });
+      window.addEventListener('pageshow', function () { autoRate(true); });
+    }
   }
 
   /* ---------- 13. Importar / restaurar copias ---------- */
@@ -2662,7 +2702,7 @@
     if (withWelcome) showSessionSplash();
     if (!CLOUD) {
       S = localLoad(); offline = false;
-      render(); autoRate(); autoRefs(); notifyOnOpen(); return;
+      render(); startRateAutoRefresh(); autoRefs(); notifyOnOpen(); return;
     }
     $navwrap.hidden = true;
     $app.innerHTML = '<div class="auth"><div class="brand brand-lockup"><img src="icons/icon-192.png" alt="" width="48" height="48" aria-hidden="true"><span>Cuadre</span></div><div class="muted">Cargando tus datos…</div></div>'; 
@@ -2673,7 +2713,7 @@
       if (cached) { S = cached; offline = true; }
       else { S = null; hideSessionSplash(); renderFatal('No se pudieron cargar tus datos. ' + loadError(e), true); return; }
     }
-    render(); hideSessionSplash(); autoRate(); autoRefs(); notifyOnOpen();
+    render(); hideSessionSplash(); startRateAutoRefresh(); autoRefs(); notifyOnOpen();
   }
   async function boot() {
     if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
