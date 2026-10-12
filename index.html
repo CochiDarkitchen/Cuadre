@@ -638,6 +638,86 @@ input:focus, select:focus, textarea:focus {
 .home-balance-card .row{gap:16px;padding:9px 0;}
 .home-balance-card .row b:last-child,.home-balance-card .row span:last-child{text-align:right;font-variant-numeric:tabular-nums;}
 @media(max-width:600px){.home-balance-card{padding:20px;border-radius:20px}.home-balance-card .hero{font-size:clamp(2rem,10vw,3rem)}.home-balance-card .muted{line-height:1.5}}
+
+
+/* v2.4 — Pulido global de experiencia: jerarquía, legibilidad y estados interactivos */
+:root { --r-sm: 14px; --r-md: 19px; --r-lg: 24px; }
+html { scroll-behavior: smooth; }
+body { letter-spacing: -.008em; }
+#app.wrap { gap: 15px; }
+#app .top { min-height: 46px; }
+#app .brand-lockup { font-size: 25px; }
+#app .card {
+  border-color: color-mix(in srgb, var(--line) 86%, var(--fg));
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--fg) 4%, transparent);
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+#app .card > .label:first-child { margin-bottom: 2px; }
+#app .h2 { line-height: 1.15; }
+#app .muted { line-height: 1.55; }
+#app .label { letter-spacing: .075em; }
+#app .field { gap: 8px; }
+#app .field input, #app .field select, #app select, #app textarea.box {
+  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+#app .field input:focus, #app .field select:focus, #app select:focus, #app textarea.box:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 17%, transparent);
+}
+#app .btn, #app .link, #app .tx, #app .chip, #app .seg button, #app .nav button {
+  -webkit-tap-highlight-color: transparent;
+}
+#app .btn { letter-spacing: -.015em; }
+#app .btn:focus-visible, #app .link:focus-visible, #app .tx:focus-visible,
+#app .nav button:focus-visible, #app .chip:focus-visible, #app .seg button:focus-visible {
+  outline: 3px solid var(--accent); outline-offset: 3px;
+}
+#app .link { box-shadow: 0 2px 8px color-mix(in srgb, var(--fg) 3%, transparent); transition: border-color .18s ease, transform .18s ease, background .18s ease; }
+#app .link:hover { border-color: color-mix(in srgb, var(--accent) 48%, var(--line)); background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+#app .tx { transition: border-color .18s ease, background .18s ease, transform .14s ease; }
+#app .tx:hover { border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); }
+#app .tx .ico { background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); }
+#app .nav { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); background: color-mix(in srgb, var(--surface) 92%, transparent); }
+#app .nav .plus { transition: transform .16s ease, box-shadow .16s ease; }
+#app .nav .plus:active { transform: scale(.94); }
+#app .nav button[aria-current="page"] { font-weight: 800; }
+#app .home-balance-card { box-shadow: 0 14px 36px color-mix(in srgb, var(--accent) 9%, transparent); }
+#app .home-balance-card .hero { font-variant-numeric: tabular-nums; }
+#app .home-month-values > .col { transition: border-color .18s ease, background .18s ease; }
+#app .home-month-values > .col:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+#app .empty { padding: 38px 18px; border: 1px dashed var(--line); border-radius: var(--r-lg); background: color-mix(in srgb, var(--surface) 60%, transparent); }
+#app .empty .big { display: grid; place-items: center; width: 62px; height: 62px; border-radius: 20px; background: color-mix(in srgb, var(--accent) 11%, var(--surface)); margin-bottom: 6px; }
+#app .banner { line-height: 1.5; }
+#sheet .sheet { box-shadow: 0 -12px 42px rgba(0,0,0,.18); border: 1px solid var(--line); border-bottom: 0; }
+#sheet .sheet > .h2 { letter-spacing: -.035em; }
+#sheet .amount { transition: border-color .16s ease, box-shadow .16s ease; }
+#sheet .amount:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+.toast { backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+@media (min-width: 760px) {
+  #app.wrap { gap: 17px; }
+  #app .card:hover { border-color: color-mix(in srgb, var(--accent) 22%, var(--line)); }
+}
+@media (max-width: 600px) {
+  body { padding-inline: 12px; }
+  #app.wrap { gap: 12px; padding-bottom: calc(126px + env(safe-area-inset-bottom, 0px)); }
+  #app .card { padding: 17px; }
+  #app .home-balance-card { padding: 20px; }
+  #app .nav { padding-inline: 9px; }
+  #app .nav .in { grid-template-columns: 1fr 1fr 58px 1fr 1fr; gap: 2px; }
+  #app .nav button { font-size: 11px; }
+  #app .nav button .e { font-size: 19px; }
+  #sheet .sheet { max-height: 92dvh; padding-bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
+}
+@media (max-width: 360px) {
+  #app .home-balance-card .hero { font-size: clamp(1.8rem, 9vw, 2.4rem); }
+  #app .home-live-pill { font-size: 9px; padding: 4px 7px; }
+  #app .nav button { font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  #app .card, #app .link, #app .tx, #app .nav .plus, #app .home-month-values > .col { transition: none !important; }
+}
+
 </style>
 </head>
 <body>
