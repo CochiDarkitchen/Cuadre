@@ -718,6 +718,76 @@ body { letter-spacing: -.008em; }
   #app .card, #app .link, #app .tx, #app .nav .plus, #app .home-month-values > .col { transition: none !important; }
 }
 
+
+
+/* Cuadre Premium v2.5 · Motion & polish layer */
+:root {
+  --motion-standard: cubic-bezier(.2,.75,.25,1);
+  --motion-emphasized: cubic-bezier(.18,.82,.24,1);
+  --motion-fast: 160ms;
+  --motion-medium: 240ms;
+}
+html { scroll-behavior: smooth; }
+#app { isolation: isolate; }
+#app .card, #app .tx, #app .link, #app .chip, #app .field input, #app .field select, #app .field textarea,
+#app .seg, #app .nav button, #app .btn, #app .quick-action {
+  transition-timing-function: var(--motion-standard);
+}
+#app .card {
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--fg) 2%, transparent), 0 8px 24px color-mix(in srgb, #07150d 5%, transparent);
+  backface-visibility: hidden;
+}
+#app .card:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent), 0 10px 28px color-mix(in srgb, #07150d 7%, transparent); }
+#app .btn, #app .nav .plus, #app .quick-action { will-change: transform; }
+#app .btn:not(:disabled):focus-visible, #app .nav button:focus-visible, #app .quick-action:focus-visible,
+#app .chip:focus-visible, #app .link:focus-visible, #app .tx:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 70%, white);
+  outline-offset: 3px;
+}
+#app .field input:focus, #app .field select:focus, #app .field textarea:focus {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+#app .nav { box-shadow: 0 -8px 28px color-mix(in srgb, #07150d 6%, transparent); }
+#app .nav button[aria-current="page"] { position: relative; }
+#app .nav button[aria-current="page"]::after {
+  content: ""; position: absolute; left: 50%; bottom: 4px; width: 16px; height: 3px; border-radius: 99px;
+  background: var(--accent); transform: translateX(-50%); opacity: .9;
+}
+#app .nav .plus { box-shadow: 0 7px 22px color-mix(in srgb, var(--accent) 28%, transparent), 0 0 0 4px var(--surface); }
+#app .nav .plus:active { box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 22%, transparent), 0 0 0 4px var(--surface); }
+#app .tx, #app .link, #app .chip, #app .quick-action { transition: transform var(--motion-fast), background-color var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-fast); }
+#app .field input, #app .field select, #app .field textarea { transition: border-color var(--motion-fast), box-shadow var(--motion-fast), background-color var(--motion-fast); }
+#app .hero { font-variant-numeric: tabular-nums; letter-spacing: -.045em; text-wrap: balance; }
+#app h1, #app h2, #app h3 { text-wrap: balance; }
+#app .bar > i, #app .pbar > i { transform-origin: left center; }
+#app.motion-enter > * { animation-duration: .36s; animation-timing-function: var(--motion-emphasized); }
+#app.motion-enter > :nth-child(2) { animation-delay: 25ms; }
+#app.motion-enter > :nth-child(3) { animation-delay: 50ms; }
+#app.motion-enter > :nth-child(4) { animation-delay: 75ms; }
+#app.motion-enter > :nth-child(5) { animation-delay: 100ms; }
+#app.motion-enter > :nth-child(n+6) { animation-delay: 115ms; }
+.scrim { backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
+.scrim .sheet { transform-origin: center bottom; }
+.toast { border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line)); box-shadow: 0 12px 34px color-mix(in srgb, #07150d 16%, transparent); }
+@media (hover: hover) and (pointer: fine) {
+  #app .card:not(.dangerzone):hover { box-shadow: 0 12px 30px color-mix(in srgb, #07150d 8%, transparent); }
+  #app .btn:not(:disabled):hover { transform: translateY(-1px); }
+  #app .quick-action:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); box-shadow: 0 6px 18px color-mix(in srgb, #07150d 7%, transparent); }
+}
+@media (max-width: 520px) {
+  #app.motion-enter > * { animation-duration: .28s; }
+  #app .card { box-shadow: 0 5px 18px color-mix(in srgb, #07150d 4%, transparent); }
+  .toast { max-width: calc(100vw - 28px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto !important; }
+  #app.motion-enter > *, #app.motion-enter .tx, #app.motion-enter .bar > i, #app.motion-enter .pbar > i,
+  .scrim, .scrim .sheet, .toast:not([hidden]), .quick-actions:not([hidden]) .quick-action,
+  .splash-content, .splash-mark, .splash-dots i { animation: none !important; }
+  #app .card, #app .tx, #app .link, #app .chip, #app .field input, #app .field select, #app .field textarea,
+  #app .seg, #app .nav button, #app .btn, #app .quick-action, .scrim, .scrim .sheet, .toast { transition: none !important; }
+}
+
 </style>
 </head>
 <body>
