@@ -7,4 +7,4 @@ La guía aparece durante la primera visita en el navegador/perfil actual y se pu
 3. **Prioridad:** gastos, ahorro o pagos. Se guarda como preferencia orientativa; no modifica automáticamente porcentajes ni crea movimientos.
 4. **Comenzar:** entrar a la app o registrar el primer movimiento.
 
-Desde Más → Ayuda y primeros pasos y Más → Apariencia se puede repetir la guía.
+Desde Más → Ayuda y primeros pasos y Más → Apariencia se puede repetir la guía. 
